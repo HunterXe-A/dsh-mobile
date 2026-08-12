@@ -30,6 +30,11 @@ export type MobilePage = 'sidebar' | 'chat'
 /** Wait after the last scroll event before the pager settles. */
 const SCROLL_SETTLE_MS = 200
 
+/** The sidebar shell's collapse toggle labels (zh / en) — clicking it while
+ *  the sidebar is expanded must NOT collapse it to the rail (which would
+ *  unload its content); it flips back to the chat page instead. */
+const SIDEBAR_COLLAPSE_LABELS = new Set(['收起侧边栏', 'Collapse sidebar'])
+
 /**
  * Viewport meta content: maximum-scale blocks the iOS focus zoom that would
  * otherwise fight the fixed-height mobile layout; viewport-fit=cover exposes
@@ -369,7 +374,10 @@ export class MobileController implements MobileControllerHandle {
 
   /** A tap on the exposed chat card returns to the chat page (PiUI's
    *  overlay behavior: the exposed chat is not interactive while the
-   *  sidebar page is showing). */
+   *  sidebar page is showing). The sidebar's own collapse toggle is
+   *  intercepted the same way: collapsing to the rail would unload the
+   *  sidebar content, so it flips back to the chat page instead — the
+   *  state (expanded) is never touched. */
   readonly #onDocClickCapture = (event: MouseEvent): void => {
     const target = event.target
     if (!(target instanceof Element)) return
@@ -378,7 +386,19 @@ export class MobileController implements MobileControllerHandle {
     if (frame === null || !mobile) return
     const chatLeft = chatPageLeft(frame)
     if (chatLeft <= 0) return
-    if (frame.scrollLeft >= chatLeft / 2) return // already on the chat page
+    const sidebarCol = frame.firstElementChild
+    // The sidebar's collapse toggle: stop the rail collapse, return to chat.
+    if (sidebarCol instanceof Element && sidebarCol.contains(target)) {
+      const btn = target.closest('button')
+      if (btn !== null && SIDEBAR_COLLAPSE_LABELS.has(btn.getAttribute('aria-label') ?? '')) {
+        event.preventDefault()
+        event.stopPropagation()
+        this.#placeOnChat('smooth')
+        return
+      }
+    }
+    // The exposed chat card: return to chat (only while on the sidebar page).
+    if (frame.scrollLeft >= chatLeft / 2) return
     const chatCard = frame.children[1]
     if (chatCard instanceof Element && chatCard.contains(target)) {
       this.#placeOnChat('smooth')

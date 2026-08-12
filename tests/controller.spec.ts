@@ -178,6 +178,28 @@ describe('MobileController always-open sidebar + pager', () => {
     expect(toggle).toHaveBeenCalledTimes(1) // pure scroll, state untouched
   })
 
+  it('the sidebar collapse toggle flips to chat instead of collapsing to the rail', () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const toggle = vi.fn(() => { frame.removeAttribute('data-sidebar-collapsed') })
+    const controller = makeController({ toggleSidebar: toggle })
+    controller.mount()
+    expect(toggle).toHaveBeenCalledTimes(1) // the mount-time always-open expand
+    // The user swiped to the sidebar page and taps the shell's collapse
+    // button (aria-label 收起侧边栏): the rail collapse is stopped and the
+    // pager returns to chat — the state stays expanded, content stays
+    // rendered.
+    frame.scrollLeft = 0
+    const sidebarCol = frame.firstElementChild as HTMLElement
+    const collapseBtn = document.createElement('button')
+    collapseBtn.setAttribute('aria-label', '收起侧边栏')
+    sidebarCol.append(collapseBtn)
+    collapseBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(frame.scrollLeft).toBe(300)
+    expect(toggle).toHaveBeenCalledTimes(1) // no extra toggle
+    expect(controller.isSidebarOpen()).toBe(true)
+  })
+
   it('returnToChat scrolls back to the chat page (session picked in the sidebar)', () => {
     stubMatchMedia(true)
     const frame = makeFrame()
