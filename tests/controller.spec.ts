@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
-/** MobileController: DOM mirror, viewport meta, backdrop/FAB, keyboard inset, teardown. */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  BACKDROP_ATTR, DRAWER_ATTR, FAB_ATTR, MobileController,
-} from '../src/client/controller.ts'
+/** MobileController: pager page mirror, viewport meta, FAB, keyboard inset, teardown. */
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { FAB_ATTR, MobileController, PAGE_ATTR } from '../src/client/controller.ts'
 
 /** A MediaQueryList stub that records its change listener for manual firing. */
 function stubMatchMedia(matches: boolean): { mql: MediaQueryList; fire: (next: boolean) => void } {
@@ -26,12 +24,26 @@ function stubMatchMedia(matches: boolean): { mql: MediaQueryList; fire: (next: b
   return { mql, fire }
 }
 
+/**
+ * Build the AppFrame-shaped frame: a scrollable grid whose first child is the
+ * sidebar page (offsetWidth 100 — the chat page's snap position). scrollTo is
+ * stubbed onto the instance so tests can read the requested position.
+ */
 function makeFrame(): HTMLElement {
   const root = document.createElement('div')
   root.id = 'root'
   const frame = document.createElement('div')
   frame.setAttribute('data-sidebar-collapsed', '')
   frame.setAttribute('data-details-collapsed', '')
+  const sidebar = document.createElement('div')
+  Object.defineProperty(sidebar, 'offsetWidth', { configurable: true, value: 300 })
+  frame.append(sidebar)
+  const center = document.createElement('div')
+  center.dataset.chatFlow = ''
+  frame.append(center)
+  const details = document.createElement('div')
+  frame.append(details)
+  frame.scrollTo = ((opts: ScrollToOptions): void => { frame.scrollLeft = opts.left ?? 0 }) as never
   root.append(frame)
   document.body.append(root)
   return frame
@@ -52,7 +64,7 @@ afterEach(() => {
 })
 
 describe('MobileController mount/dispose', () => {
-  it('tags <html>, upgrades the viewport meta, and appends backdrop + FAB', () => {
+  it('tags <html>, upgrades the viewport meta, and appends the FAB (no backdrop)', () => {
     stubMatchMedia(false)
     makeFrame()
     const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
@@ -61,13 +73,10 @@ describe('MobileController mount/dispose', () => {
     const meta = document.querySelector('meta[name="viewport"]')
     expect(meta?.getAttribute('content')).toContain('viewport-fit=cover')
     expect(meta?.getAttribute('content')).toContain('maximum-scale=1')
-    expect(document.querySelector(`[${BACKDROP_ATTR}]`)).not.toBeNull()
-    const fab = document.querySelector(`[${FAB_ATTR}]`)
-    expect(fab).not.toBeNull()
-    expect(fab?.getAttribute('aria-expanded')).toBe('false')
+    expect(document.querySelector(`[${FAB_ATTR}]`)).not.toBeNull()
+    expect(document.querySelector('[data-dshm-backdrop]')).toBeNull()
     controller.dispose()
     expect(document.documentElement.hasAttribute('data-dsh-mobile')).toBe(false)
-    expect(document.querySelector(`[${BACKDROP_ATTR}]`)).toBeNull()
     expect(document.querySelector(`[${FAB_ATTR}]`)).toBeNull()
   })
 
@@ -85,86 +94,114 @@ describe('MobileController mount/dispose', () => {
   })
 })
 
-describe('MobileController drawer mirror', () => {
-  it('opens the drawer mirror when the frame expands on a narrow viewport', async () => {
+describe('MobileController pager', () => {
+  it('places the pager on the chat page at mount (collapsed sidebar = chat page)', () => {
     stubMatchMedia(true)
     const frame = makeFrame()
     const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
-    expect(controller.isDrawerOpen()).toBe(false)
-    // The frame's own collapse attribute is the single source of truth:
-    // AppFrame flips it when the sidebar expands over the squeezed center.
-    frame.removeAttribute('data-sidebar-collapsed')
-    await flushObservers()
-    expect(controller.isDrawerOpen()).toBe(true)
-    expect(document.documentElement.getAttribute(DRAWER_ATTR)).toBe('open')
-    frame.setAttribute('data-sidebar-collapsed', '')
-    await flushObservers()
-    expect(controller.isDrawerOpen()).toBe(false)
+    expect(controller.isSidebarOpen()).toBe(false)
+    expect(frame.scrollLeft).toBe(300) // the sidebar page width = chat snap point
+    expect(document.documentElement.getAttribute(PAGE_ATTR)).toBe('chat')
   })
 
-  it('stays closed on wide viewports even when the frame is expanded', () => {
+  it('flips to the sidebar page when the frame expands, and back when it collapses', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    expect(frame.scrollLeft).toBe(300)
+    // AppFrame drops data-sidebar-collapsed when the sidebar expands on a
+    // narrow viewport (the user toggled it): the pager flips to page 0.
+    frame.removeAttribute('data-sidebar-collapsed')
+    await flushObservers()
+    expect(controller.isSidebarOpen()).toBe(true)
+    expect(frame.scrollLeft).toBe(0)
+    expect(document.documentElement.getAttribute(PAGE_ATTR)).toBe('sidebar')
+    frame.setAttribute('data-sidebar-collapsed', '')
+    await flushObservers()
+    expect(controller.isSidebarOpen()).toBe(false)
+    expect(frame.scrollLeft).toBe(300)
+  })
+
+  it('stays on the chat page on wide viewports even when the frame is expanded', async () => {
     stubMatchMedia(false)
     const frame = makeFrame()
     const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     frame.removeAttribute('data-sidebar-collapsed')
-    expect(controller.isDrawerOpen()).toBe(false)
+    await flushObservers()
+    expect(controller.isSidebarOpen()).toBe(false)
+    expect(document.documentElement.getAttribute(PAGE_ATTR)).toBe('chat')
   })
 
-  it('picks up the frame when it mounts after the controller', async () => {
+  it('picks up the frame when it mounts after the controller and centers the chat page', async () => {
     stubMatchMedia(true)
     const root = document.createElement('div')
     root.id = 'root'
     document.body.append(root)
     const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
-    expect(controller.isDrawerOpen()).toBe(false)
     const frame = document.createElement('div')
     frame.setAttribute('data-sidebar-collapsed', '')
     frame.setAttribute('data-details-collapsed', '')
+    const sidebar = document.createElement('div')
+    Object.defineProperty(sidebar, 'offsetWidth', { configurable: true, value: 300 })
+    frame.append(sidebar)
+    frame.scrollTo = ((opts: ScrollToOptions): void => { frame.scrollLeft = opts.left ?? 0 }) as never
     root.append(frame)
-    await flushObservers() // the root observer attaches the frame observer
-    frame.removeAttribute('data-sidebar-collapsed')
     await flushObservers()
-    expect(controller.isDrawerOpen()).toBe(true)
+    expect(frame.scrollLeft).toBe(300)
+    expect(controller.isSidebarOpen()).toBe(false)
   })
 
-  it('closes on a session-row pick inside the open drawer, after the row handler', async () => {
+  it('repositions the active page after a width reflow', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
-    // The real toggle flips the frame's collapsed attribute (AppFrame
-    // re-renders from the layout store); the spy simulates that reaction.
-    const toggle = vi.fn(() => { frame.setAttribute('data-sidebar-collapsed', '') })
-    const controller = new MobileController({ toggleSidebar: toggle })
+    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
-    frame.removeAttribute('data-sidebar-collapsed')
-    await flushObservers()
-    expect(controller.isDrawerOpen()).toBe(true)
-    const row = document.createElement('div')
-    row.setAttribute('role', 'treeitem')
-    document.body.append(row)
-    row.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    // The close is deferred to a microtask so the native open runs first.
-    expect(toggle).not.toHaveBeenCalled()
-    await flushObservers()
-    expect(toggle).toHaveBeenCalledTimes(1)
-    expect(controller.isDrawerOpen()).toBe(false)
+    expect(frame.scrollLeft).toBe(300)
+    // The sidebar page narrows (viewport change): the chat snap point moves.
+    const sidebar = frame.firstElementChild as HTMLElement
+    Object.defineProperty(sidebar, 'offsetWidth', { configurable: true, value: 250 })
+    window.dispatchEvent(new Event('resize'))
+    await new Promise(resolve => setTimeout(resolve, 200)) // debounce
+    expect(frame.scrollLeft).toBe(250)
   })
+})
 
-  it('ignores clicks on the plugin chrome itself', () => {
+describe('MobileController returnToChat', () => {
+  it('toggles back to the chat page when the sidebar was opened through the menu', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
     const toggle = toggleSidebarSpy()
     const controller = new MobileController({ toggleSidebar: toggle })
     controller.mount()
+    // On the chat page: no toggle.
+    controller.returnToChat()
+    expect(toggle).not.toHaveBeenCalled()
+    // Sidebar opened through the menu (frame expanded): toggle back.
     frame.removeAttribute('data-sidebar-collapsed')
-    const backdrop = document.querySelector<HTMLElement>(`[${BACKDROP_ATTR}]`)!
-    backdrop.click()
-    expect(toggle).toHaveBeenCalledTimes(1) // the backdrop's own handler, once
-    const fab = document.querySelector<HTMLElement>(`[${FAB_ATTR}]`)!
-    fab.click()
-    expect(toggle).toHaveBeenCalledTimes(2) // no double-fire from the capture listener
+    await flushObservers()
+    expect(controller.isSidebarOpen()).toBe(true)
+    controller.returnToChat()
+    expect(toggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('scrolls back directly when the user swiped to the sidebar page (state unchanged)', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const toggle = toggleSidebarSpy()
+    const controller = new MobileController({ toggleSidebar: toggle })
+    controller.mount()
+    // Manual swipe: scrollLeft moves to the sidebar page, the frame stays
+    // collapsed (the state mirror still says chat).
+    frame.scrollLeft = 0
+    expect(controller.isSidebarOpen()).toBe(true)
+    expect(document.documentElement.getAttribute(PAGE_ATTR)).toBe('chat')
+    controller.returnToChat()
+    expect(toggle).not.toHaveBeenCalled()
+    expect(frame.scrollLeft).toBe(300) // scrolled straight back to the chat page
   })
 })
 

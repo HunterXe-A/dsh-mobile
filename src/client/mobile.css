@@ -9,7 +9,15 @@
    ([data-phase], [data-conversation-scroll], [data-composer-seat],
    [data-composer-card]), the sidebar's [role=treeitem] rows, and the drag
    handles' data-side attribute. No hashed class names — the same sheet must
-   work against unpatched distributions. */
+   work against unpatched distributions.
+
+   Mobile layout follows PiUI's chat pager: the STOCK three-column frame
+   itself becomes the horizontal pager. Each column stays a snap-aligned
+   page — sidebar | chat | details — the sidebar page is viewport-72px wide
+   (a sliver of the chat stays visible, PiUI's overlayWidth rule), the chat
+   and details pages are full width, and the chat column renders completely
+   untouched. The controller scrolls the frame between pages; the user can
+   also swipe. */
 
 /* ---------- tokens ---------- */
 [data-dsh-mobile] {
@@ -41,24 +49,8 @@
 
 /* ---------- plugin-owned chrome (controller DOM) ---------- */
 
-/* Drawer backdrop: invisible until the drawer opens. */
-[data-dsh-mobile] [data-dshm-backdrop] {
-  position: fixed;
-  inset: 0;
-  z-index: 55;
-  background: color-mix(in srgb, var(--dsw-static-neutral-1000) 42%, transparent);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
-}
-
-[data-dsh-mobile][data-dshm-drawer='open'] [data-dshm-backdrop] {
-  opacity: 1;
-  pointer-events: auto;
-}
-
 /* The session-header menu button (slot entry) and the hero FAB share one
-   compact ghost-circle look. */
+   compact ghost-circle look. Both navigate the pager to the sidebar page. */
 [data-dsh-mobile] [data-dshm-menu],
 [data-dsh-mobile] [data-dshm-fab-menu] {
   display: inline-flex;
@@ -108,48 +100,52 @@
   }
 }
 
-/* ---------- mobile layout (narrow viewports) ---------- */
+/* ---------- mobile pager (narrow viewports) ---------- */
 
 @media (max-width: 768px) {
   /* The AppFrame keeps at least one of its two data attributes in every
-     state; the union selects the frame on any viewport. Force a single
-     column: the chat fills the screen, the sidebar drawer and the details
-     page overlay it. */
+     state; the union selects the frame on any viewport. Reflow the grid
+     tracks into three snap-aligned pages. The sidebar page is viewport-72px
+     (PiUI's overlayWidth) so a sliver of the chat shows beside it; chat and
+     details take the full viewport. The frame scrolls horizontally only. */
   [data-dsh-mobile] #root > div[data-sidebar-collapsed],
   [data-dsh-mobile] #root > div[data-details-collapsed] {
-    grid-template-columns: 0 minmax(0, 1fr) 0 !important;
-    overscroll-behavior: contain;
+    grid-template-columns: calc(100% - 72px) 100% 100% !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  /* Hide the pager's own horizontal scrollbar on every engine. */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed]::-webkit-scrollbar,
+  [data-dsh-mobile] #root > div[data-details-collapsed]::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
+  /* The three pages snap to the scrollport start (scroll-snap-stop keeps a
+     fast swipe from skipping a page). */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(-n+3),
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(-n+3) {
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+
+  /* Sidebar page: a floating sheet over the pager (PiUI look), rounded
+     corner on the chat-facing edge. */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
+    z-index: 1;
+    border-right: 1px solid var(--dsw-alias-border-l1);
+    box-shadow: 12px 0 32px color-mix(in srgb, var(--dsw-static-neutral-1000) 18%, transparent);
   }
 
   /* Drag handles are desktop-only affordances. */
   [data-dsh-mobile] [data-side] {
     display: none !important;
-  }
-
-  /* Sidebar column → slide-in drawer. The rail and the expanded column share
-     this one box; translateX hides it off the left edge when closed. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 60;
-    width: min(90vw, 340px);
-    max-width: 100%;
-    box-sizing: border-box;
-    padding-top: var(--dshm-safe-top);
-    border-right: 1px solid var(--dsw-alias-border-l1);
-    background: var(--dsw-specific-sidebar-fill);
-    box-shadow: 0 0 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 22%, transparent);
-    transform: translateX(-105%);
-    transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-    will-change: transform;
-  }
-
-  [data-dsh-mobile][data-dshm-drawer='open'] #root > div[data-sidebar-collapsed] > :first-child,
-  [data-dsh-mobile][data-dshm-drawer='open'] #root > div[data-details-collapsed] > :first-child {
-    transform: translateX(0);
   }
 
   /* Session header: compact with a safe-area top. */
@@ -193,11 +189,10 @@
   }
 }
 
-/* Respect reduced-motion: drawers snap instead of sliding. */
+/* Respect reduced-motion: programmatic page flips snap instead of sliding
+   (the controller passes behavior:auto when this matches). */
 @media (prefers-reduced-motion: reduce) {
-  [data-dsh-mobile] [data-dshm-backdrop],
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
-    transition: none;
+  [data-dsh-mobile] {
+    scroll-behavior: auto !important;
   }
 }

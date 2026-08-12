@@ -1,26 +1,31 @@
 /**
  * DOM-side mobile controller: the non-React half of the plugin. Owns the
  * pieces the frame itself cannot express — the viewport meta upgrade, the
- * safe-area/keyboard CSS variables, the drawer open-state mirror on <html>,
- * and the plugin's own chrome (drawer backdrop, hero menu FAB). Everything
- * it installs is removed by dispose(), and every rule it depends on is
- * scoped under the [data-dsh-mobile] attribute it sets on <html>.
+ * safe-area/keyboard CSS variables, the pager page mirror on <html>, and the
+ * plugin's own chrome (hero menu FAB). Everything it installs is removed by
+ * dispose(), and every rule it depends on is scoped under the
+ * [data-dsh-mobile] attribute it sets on <html>.
  *
- * The drawer open state is read off the AppFrame's own DOM (the
- * data-sidebar-collapsed attribute flips when the frame's sidebar collapses
- * or expands), so the controller never reaches into the layout store — it
- * observes the frame and mirrors the state on <html> for the stylesheet.
+ * Mobile layout is PiUI's chat pager: the STOCK AppFrame becomes a
+ * horizontal scroll-snap pager whose columns are the pages (sidebar | chat |
+ * details — mobile.css reflows the grid tracks). The current page is driven
+ * by the frame's own state: below the breakpoint, a collapsed sidebar means
+ * the chat page is active, an expanded one means the sidebar page is. The
+ * controller watches the frame's data-sidebar-collapsed attribute and
+ * scrolls the pager to match; a manual swipe is never overridden.
  */
 
-/** The narrow breakpoint the layout restructure keys off (PiUI's 768px). */
+/** The narrow breakpoint the pager keys off (PiUI's 768px). */
 export const MOBILE_BREAKPOINT = '(max-width: 768px)'
 
-/** The <html> attribute that mirrors the drawer's open state (CSS reads it). */
-export const DRAWER_ATTR = 'data-dshm-drawer'
+/** The <html> attribute that mirrors the active pager page (CSS/aria reads it). */
+export const PAGE_ATTR = 'data-dshm-page'
 
-/** Marker attributes for the plugin-owned chrome elements. */
-export const BACKDROP_ATTR = 'data-dshm-backdrop'
+/** Marker attribute for the plugin-owned hero FAB. */
 export const FAB_ATTR = 'data-dshm-fab-menu'
+
+/** Pager page names (the mirror values of PAGE_ATTR). */
+export type MobilePage = 'sidebar' | 'chat'
 
 /**
  * Viewport meta content: maximum-scale blocks the iOS focus zoom that would
@@ -47,6 +52,13 @@ function findFrame(): HTMLElement | null {
   return document.querySelector<HTMLElement>(FRAME_SELECTOR)
 }
 
+/** The pager's chat-page snap position: the rendered width of the sidebar
+ *  page column (PiUI's overlayWidth; the CSS track is calc(100% - 72px)). */
+function chatPageLeft(frame: HTMLElement): number {
+  const sidebar = frame.firstElementChild
+  return sidebar instanceof HTMLElement ? sidebar.offsetWidth : 0
+}
+
 /** Callbacks the controller needs from the apply world. */
 export interface MobileControllerOptions {
   /** Toggle the sidebar panel (frame-owned layout action). */
@@ -55,10 +67,10 @@ export interface MobileControllerOptions {
 
 /** Test-facing surface of the controller (the class keeps everything else private). */
 export interface MobileControllerHandle {
-  /** True while the drawer is mirrored open on <html>. */
-  isDrawerOpen(): boolean
-  /** Close the drawer when it is open (a session pick from the drawer). */
-  closeDrawer(): void
+  /** True while the pager sits on the sidebar page (mobile, sidebar expanded). */
+  isSidebarOpen(): boolean
+  /** Return to the chat page when the sidebar page is open (a session pick). */
+  returnToChat(): void
   /** Install the controller; idempotent. */
   mount(): void
   /** Remove every DOM effect; idempotent. */
@@ -69,7 +81,6 @@ export interface MobileControllerHandle {
 export class MobileController implements MobileControllerHandle {
   readonly #options: MobileControllerOptions
   #html: HTMLElement | null = null
-  #backdrop: HTMLDivElement | null = null
   #fab: HTMLButtonElement | null = null
   #mql: MediaQueryList | null = null
   #frameObserver: MutationObserver | null = null
@@ -77,6 +88,7 @@ export class MobileController implements MobileControllerHandle {
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
   #keyboardFrame: number | null = null
+  #resizeTimer: number | null = null
   #mounted = false
   #disposed = false
 
@@ -85,14 +97,32 @@ export class MobileController implements MobileControllerHandle {
     this.#options = options
   }
 
-  /** True while the drawer is mirrored open on <html>. */
-  isDrawerOpen(): boolean {
-    return this.#html?.hasAttribute(DRAWER_ATTR) ?? false
+  /**
+   * True while the pager sits on the sidebar page. Reads the ACTUAL scroll
+   * position, not the state mirror: the user can swipe there manually
+   * without the frame's collapse state changing.
+   */
+  isSidebarOpen(): boolean {
+    const frame = findFrame()
+    if (frame === null || !(this.#mql?.matches ?? false)) return false
+    return frame.scrollLeft < chatPageLeft(frame) / 2
   }
 
-  /** Close the drawer when it is open (a session pick from the drawer). */
-  closeDrawer(): void {
-    if (this.isDrawerOpen()) this.#options.toggleSidebar()
+  /**
+   * Return to the chat page (a session picked from the sidebar). Two entry
+   * shapes: the sidebar was opened through the menu (frame expanded — flip
+   * the state back and let the observer slide the pager), or the user just
+   * swiped there (frame still collapsed — scroll back directly).
+   */
+  returnToChat(): void {
+    if (!this.isSidebarOpen()) return
+    const frame = findFrame()
+    if (frame === null) return
+    if (frame.hasAttribute('data-sidebar-collapsed')) {
+      frame.scrollTo({ left: chatPageLeft(frame), behavior: 'smooth' })
+    } else {
+      this.#options.toggleSidebar()
+    }
   }
 
   /**
@@ -108,12 +138,11 @@ export class MobileController implements MobileControllerHandle {
     html.dataset.dshMobile = ''
 
     this.#installViewportMeta()
-    this.#backdrop = this.#makeBackdrop()
     this.#fab = this.#makeFab()
-    document.body.append(this.#backdrop, this.#fab)
+    document.body.append(this.#fab)
 
     this.#mql = window.matchMedia(MOBILE_BREAKPOINT)
-    this.#mql.addEventListener('change', this.#syncDrawer)
+    this.#mql.addEventListener('change', this.#onMqlChange)
 
     // Keyboard inset: the visual viewport shrinks when the OS keyboard opens;
     // the composer seat pads itself by the difference (rAF-throttled — the
@@ -122,7 +151,13 @@ export class MobileController implements MobileControllerHandle {
     vv?.addEventListener('resize', this.#requestKeyboard)
     vv?.addEventListener('scroll', this.#requestKeyboard)
 
-    // Drawer open state tracks the frame's own collapsed attribute.
+    // Keep the active page in place when the viewport width changes within a
+    // breakpoint side (rotation / split-screen reflows the page tracks).
+    window.addEventListener('resize', this.#onWindowResize)
+
+    // The pager follows the frame's own collapse state (single source of
+    // truth: AppFrame flips it when the sidebar expands over the squeezed
+    // center below the breakpoint).
     const root = document.getElementById('root')
     if (root !== null) {
       this.#rootObserver = new MutationObserver(() => { this.#ensureFrameObserver() })
@@ -130,11 +165,7 @@ export class MobileController implements MobileControllerHandle {
     }
     this.#ensureFrameObserver()
 
-    // Picking a session from the drawer closes it after the native row
-    // handler opens the session (capture runs before, microtask after).
-    document.addEventListener('click', this.#onDocumentClickCapture, true)
-
-    this.#syncDrawer()
+    this.#syncPage('auto')
   }
 
   /** Remove every DOM effect; safe to call twice. */
@@ -146,17 +177,19 @@ export class MobileController implements MobileControllerHandle {
     this.#frameObserver = null
     this.#rootObserver?.disconnect()
     this.#rootObserver = null
-    this.#mql?.removeEventListener('change', this.#syncDrawer)
+    this.#mql?.removeEventListener('change', this.#onMqlChange)
     this.#mql = null
+    window.removeEventListener('resize', this.#onWindowResize)
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     if (this.#keyboardFrame !== null) {
       cancelAnimationFrame(this.#keyboardFrame)
       this.#keyboardFrame = null
     }
-    document.removeEventListener('click', this.#onDocumentClickCapture, true)
-    this.#backdrop?.remove()
-    this.#backdrop = null
+    if (this.#resizeTimer !== null) {
+      window.clearTimeout(this.#resizeTimer)
+      this.#resizeTimer = null
+    }
     this.#fab?.remove()
     this.#fab = null
     if (this.#viewportMeta !== null) {
@@ -168,7 +201,7 @@ export class MobileController implements MobileControllerHandle {
     const html = this.#html
     if (html !== null) {
       html.removeAttribute('data-dsh-mobile')
-      html.removeAttribute(DRAWER_ATTR)
+      html.removeAttribute(PAGE_ATTR)
       html.style.removeProperty('--dshm-keyboard-inset')
     }
     this.#html = null
@@ -189,14 +222,6 @@ export class MobileController implements MobileControllerHandle {
     this.#viewportMeta = meta
   }
 
-  #makeBackdrop(): HTMLDivElement {
-    const backdrop = document.createElement('div')
-    backdrop.dataset.dshmBackdrop = ''
-    backdrop.setAttribute('aria-hidden', 'true')
-    backdrop.addEventListener('click', this.#options.toggleSidebar)
-    return backdrop
-  }
-
   #makeFab(): HTMLButtonElement {
     const fab = document.createElement('button')
     fab.type = 'button'
@@ -212,27 +237,52 @@ export class MobileController implements MobileControllerHandle {
     return document.documentElement.lang === 'zh-CN' ? '打开侧边栏' : 'Open sidebar'
   }
 
-  readonly #syncDrawer = (): void => {
+  /**
+   * Mirror the pager page on <html> and, on mobile, scroll the frame to the
+   * page the frame's own state demands. `behavior` distinguishes the
+   * state-driven flip (smooth) from initial placement and reflow (auto).
+   */
+  readonly #syncPage = (behavior: ScrollBehavior): void => {
     const html = this.#html
     if (html === null) return
     const mobile = this.#mql?.matches ?? false
     const frame = findFrame()
-    const open = mobile && frame !== null && !frame.hasAttribute('data-sidebar-collapsed')
-    if (open) html.setAttribute(DRAWER_ATTR, 'open')
-    else html.removeAttribute(DRAWER_ATTR)
-    this.#fab?.setAttribute('aria-expanded', String(open))
+    const page: MobilePage = !mobile || frame === null || frame.hasAttribute('data-sidebar-collapsed')
+      ? 'chat'
+      : 'sidebar'
+    html.setAttribute(PAGE_ATTR, page)
+    this.#fab?.setAttribute('aria-expanded', String(page === 'sidebar'))
+    if (frame === null || !mobile) return
+    const left = page === 'sidebar' ? 0 : chatPageLeft(frame)
+    if (Math.abs(frame.scrollLeft - left) > 2) {
+      frame.scrollTo({ left, behavior })
+    }
   }
+
+  /** State flips animate the page transition. */
+  readonly #onFrameCollapseChange = (): void => { this.#syncPage('smooth') }
 
   readonly #ensureFrameObserver = (): void => {
     if (this.#frameObserver !== null) return
     const frame = findFrame()
     if (frame === null) return
-    this.#frameObserver = new MutationObserver(this.#syncDrawer)
+    this.#frameObserver = new MutationObserver(this.#onFrameCollapseChange)
     this.#frameObserver.observe(frame, {
       attributes: true,
       attributeFilter: ['data-sidebar-collapsed'],
     })
-    this.#syncDrawer()
+    this.#syncPage('auto')
+  }
+
+  readonly #onMqlChange = (): void => { this.#syncPage('auto') }
+
+  /** Width reflow within one breakpoint side: reposition the active page. */
+  readonly #onWindowResize = (): void => {
+    if (this.#resizeTimer !== null) return
+    this.#resizeTimer = window.setTimeout(() => {
+      this.#resizeTimer = null
+      this.#syncPage('auto')
+    }, 120)
   }
 
   readonly #requestKeyboard = (): void => {
@@ -251,17 +301,5 @@ export class MobileController implements MobileControllerHandle {
       ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
       : 0
     html.style.setProperty('--dshm-keyboard-inset', `${inset}px`)
-  }
-
-  readonly #onDocumentClickCapture = (event: MouseEvent): void => {
-    const target = event.target
-    if (!(target instanceof Element)) return
-    if (target.closest(`[${BACKDROP_ATTR}], [${FAB_ATTR}]`) !== null) return
-    if (!this.isDrawerOpen()) return
-    // A session row picked from the drawer closes it; the native row handler
-    // opens the session on the same gesture, and the microtask runs after it.
-    if (target.closest('[role="treeitem"]') !== null) {
-      queueMicrotask(() => { this.closeDrawer() })
-    }
   }
 }

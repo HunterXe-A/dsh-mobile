@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-mobile",
-  "description": "DSH mobile-friendly web UI plugin: single-column chat on narrow screens, slide-in sidebar drawer with backdrop, safe-area + virtual-keyboard insets, compact session-header menu, touch-sized controls, hidden scrollbars on coarse pointers. A pure client-side adaptation over the stock frame — zero core changes, works on official rc.2 distributions.",
+  "description": "DSH mobile-friendly web UI plugin (PiUI chat-pager mode): on narrow screens the stock three-column frame becomes a horizontal scroll-snap pager — sidebar | chat | details — with the chat column rendered completely untouched; safe-area + virtual-keyboard insets, compact session-header menu, touch-sized controls, hidden scrollbars on coarse pointers. Pure client-side adaptation over the stock frame — zero core changes, works on official rc.2 distributions.",
   "version": "0.1.0",
   "private": true,
   "type": "module",

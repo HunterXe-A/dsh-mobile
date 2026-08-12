@@ -103,7 +103,7 @@ describe('dsh-mobile apply', () => {
     expect(document.documentElement.dataset.dshMobile).toBe('')
   })
 
-  it('closes the drawer when the current session changes', async () => {
+  it('returns to the chat page when the current session changes', async () => {
     const listeners: Array<() => void> = []
     let current: string | undefined = undefined
     const list: ListCapture = {
@@ -111,7 +111,7 @@ describe('dsh-mobile apply', () => {
       subscribe: (fn) => { listeners.push(fn); return () => { } },
     }
     // The toggle flips the frame's collapsed attribute like the real AppFrame
-    // re-render would, so the drawer mirror visibly closes.
+    // re-render would, so the pager visibly returns to the chat page.
     let frame: HTMLElement | null = null
     const toggle = vi.fn(() => { frame?.setAttribute('data-sidebar-collapsed', '') })
     const b = await bench(true, list, {
@@ -124,22 +124,26 @@ describe('dsh-mobile apply', () => {
     root.id = 'root'
     document.body.prepend(root)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
-    // Narrow viewport with an expanded frame: the drawer mirror opens.
+    // Narrow viewport with an expanded frame: the pager sits on the sidebar page.
     mql.fire(true)
     const frameEl = document.createElement('div')
     frame = frameEl
     frameEl.setAttribute('data-sidebar-collapsed', '')
     frameEl.setAttribute('data-details-collapsed', '')
+    const sidebar = document.createElement('div')
+    Object.defineProperty(sidebar, 'offsetWidth', { configurable: true, value: 300 })
+    frameEl.append(sidebar)
+    frameEl.scrollTo = ((opts: ScrollToOptions): void => { frameEl.scrollLeft = opts.left ?? 0 }) as never
     root.append(frameEl)
     await new Promise(resolve => setTimeout(resolve, 0)) // root observer attaches
     frameEl.removeAttribute('data-sidebar-collapsed')
     await new Promise(resolve => setTimeout(resolve, 0)) // frame observer delivers
-    expect(document.documentElement.hasAttribute('data-dshm-drawer')).toBe(true)
-    // The user picks a session from the drawer: apply closes it by toggling.
+    expect(document.documentElement.getAttribute('data-dshm-page')).toBe('sidebar')
+    // The user picks a session from the sidebar: apply flips back to chat.
     current = 's1'
     for (const fn of listeners) fn()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(toggle).toHaveBeenCalledTimes(1)
-    expect(document.documentElement.hasAttribute('data-dshm-drawer')).toBe(false)
+    expect(document.documentElement.getAttribute('data-dshm-page')).toBe('chat')
   })
 })

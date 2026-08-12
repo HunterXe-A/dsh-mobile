@@ -1,10 +1,15 @@
 /**
  * Browser half of the dsh-mobile plugin: mounts the DOM-side mobile
- * controller (viewport meta, safe-area/keyboard insets, drawer mirror,
- * backdrop + hero FAB) and contributes the phone-only sidebar menu button to
- * the session header's actions row. The global mobile sheet (mobile.css) is
+ * controller (viewport meta, safe-area/keyboard insets, pager page mirror,
+ * hero FAB) and contributes the phone-only sidebar menu button to the
+ * session header's actions row. The global mobile sheet (mobile.css) is
  * injected with this bundle as a <style data-plugin> tag and removed on
  * unload — the stock GUI stays byte-identical without the plugin row.
+ *
+ * Mobile layout follows PiUI's chat pager: the stock three-column frame
+ * becomes a horizontal scroll-snap pager (sidebar | chat | details), the
+ * chat column renders completely untouched, and the menu button / FAB flip
+ * the pager to the sidebar page through the frame's own layout action.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the layout plugin's Context merge (ctx.layout) and the
@@ -38,11 +43,11 @@ export const inject = ['slots', 'layout', 'sessions']
  * @param ctx - Client root context.
  */
 export function apply(ctx: ClientContext): void {
-  // DOM controller: viewport meta, safe-area/keyboard insets, drawer mirror,
-  // backdrop + hero FAB. A current-session change (a session picked from the
-  // drawer, or a new session started) closes the drawer so the chat is
-  // immediately readable — list updates that do not move `current` (running
-  // flags, titles) leave it alone.
+  // DOM controller: viewport meta, safe-area/keyboard insets, pager page
+  // mirror, hero FAB. A current-session change (a session picked from the
+  // sidebar page, or a new session started) flips back to the chat page —
+  // list updates that do not move `current` (running flags, titles) leave
+  // it alone.
   ctx.effect(() => {
     const controller = new MobileController({
       toggleSidebar: () => ctx.layout.toggleSidebar(),
@@ -53,7 +58,7 @@ export function apply(ctx: ClientContext): void {
       const next = ctx.sessions.list.getSnapshot().current
       if (next === lastCurrent) return
       lastCurrent = next
-      controller.closeDrawer()
+      controller.returnToChat()
     })
     return () => {
       off()
@@ -61,7 +66,7 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-mobile: DOM controller')
 
-  // The phone-only drawer trigger, in the header's leading static band.
+  // The phone-only pager menu button, in the header's leading static band.
   ctx.effect(
     () => ctx.slots.inject('conversation.session.header.actions' as never, () => ctx.slots.register(
       // The target slot is declared by ui-conversation, whose types this

@@ -1,5 +1,5 @@
 /**
- * Session-header menu button: opens the mobile sidebar drawer. A
+ * Session-header menu button: flips the mobile pager to the sidebar page. A
  * `conversation.session.header.actions` list entry (order -10 — the leading
  * static-context band), shown only on narrow screens by the global sheet
  * ([data-dshm-menu] is display:none from 769px up). The hero phase has no
@@ -21,7 +21,7 @@ export interface MobileMenuInjected {
  */
 export type MobileMenuButtonProps = InjectFace<MobileMenuInjected> & PropsLocale<'mobile'>
 
-/** The phone-only sidebar drawer trigger. */
+/** The phone-only pager menu button (flips to the sidebar page). */
 export function MobileMenuButton({ toggleSidebar, t }: MobileMenuButtonProps) {
   return (
     <button
