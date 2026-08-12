@@ -239,6 +239,10 @@ export class MobileController implements MobileControllerHandle {
     if (Math.abs(frame.scrollLeft - left) > 2) {
       frame.scrollTo({ left, behavior })
     }
+    // The 3D flip vars must reflect the resting position too — an initial
+    // placement on the sidebar page (or a state flip) does not fire a
+    // scroll event, so the chat card would otherwise sit at rotateY(0).
+    this.#updateFlipVars(frame)
   }
 
   /** State flips animate the page transition; an expand that landed clears
@@ -282,17 +286,36 @@ export class MobileController implements MobileControllerHandle {
     }, 120)
   }
 
-  /** Once the scroll settles, nudge a stop just short of a page to the
-   *  whole page. The state is deliberately NOT synced here: the sidebar
-   *  stays expanded (always rendered), so a swipe across the midpoint
-   *  merely parks the pager on the other page — the sidebar column never
-   *  re-renders. */
+  /** Live pager driver: PiUI's 3D flip vars follow the scroll, and once the
+   *  scroll settles the pager re-snaps to the nearest whole page (a
+   *  short-of-page stop is nudged). The state is deliberately NOT synced —
+   *  the sidebar stays expanded (always rendered), so a swipe merely parks
+   *  the pager; the sidebar column never re-renders. */
   readonly #onPagerScroll = (): void => {
+    const frame = findFrame()
+    const mobile = this.#mql?.matches ?? false
+    if (frame === null || !mobile) return
+    this.#updateFlipVars(frame)
     if (this.#settleTimer !== null) window.clearTimeout(this.#settleTimer)
     this.#settleTimer = window.setTimeout(() => {
       this.#settleTimer = null
       this.#settlePager()
     }, SCROLL_SETTLE_MS)
+  }
+
+  /** PiUI's flip: progress -1 (sidebar page) … 0 (chat page); the chat card
+   *  rotates about the edge toward the swipe side and shrinks, so on the
+   *  sidebar page it sinks away leaving only a sliver visible. */
+  readonly #updateFlipVars = (frame: HTMLElement): void => {
+    const chatLeft = chatPageLeft(frame)
+    if (chatLeft <= 0) return
+    const progress = Math.max(-1, Math.min(1, (frame.scrollLeft - chatLeft) / chatLeft))
+    const abs = Math.abs(progress)
+    const right = Math.max(0, progress)
+    frame.style.setProperty('--dshm-rotate', `${progress * 10}deg`)
+    frame.style.setProperty('--dshm-scale', `${1 - abs * 0.06}`)
+    frame.style.setProperty('--dshm-offset-x', `${right * right * -48}px`)
+    frame.style.setProperty('--dshm-origin-x', `${50 - progress * 50}%`)
   }
 
   readonly #settlePager = (): void => {
