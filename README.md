@@ -1,23 +1,22 @@
 # dsh-mobile
 
-DSH WebUI 移动端适配插件（**PiUI 翻页器模式**）：信息流**原样保留**，整页左右翻页打开侧边栏——窄屏下框架本身就是横向 scroll-snap 翻页器（侧边栏 | 聊天），聊天页全宽且渲染零改动。纯客户端适配，零核心改动——官方 rc.2 发行版直接可用，不依赖任何扩展点 patch。
+DSH WebUI 移动端适配插件（**PiUI 翻页器结构**）：窄屏下框架本身就是横向 scroll-snap 翻页器，两页卡片——**半开侧边栏页**（`min(360px, 50vw)`）+ **全宽聊天页**。滑到侧边栏页后聊天卡片仍在右边露出一半（PiUI 同款 overlayWidth 效果），聊天渲染零改动。纯客户端适配，零核心改动——官方 rc.2 发行版直接可用。
 
 ## 功能
 
-- **左右翻页（PiUI mobile-chat-pager）**：≤768px 时三栏框架重排为两页全宽横向 snap 容器——侧边栏页与聊天页各占整屏；**手指向右拖打开侧边栏、向左拖返回聊天**（跨过中点自动吸附到整页，滑不到位也会回弹/修正，永不卡在半页），或点左上角 ☰ 程序化翻页（带滑入动画）
-- **PiUI 3D 翻页**：滚动时聊天卡片带 `rotateY/scale` 微效果（控制器按 scrollLeft 驱动 CSS 变量），`prefers-reduced-motion` 时关闭
-- **信息流原样**：聊天列就是原生渲染，一行未改，只是被放进翻页容器
-- **聊天卡片（PiUI 风）**：聊天页是贴边圆角卡片（16px 圆角 + 柔和阴影 + 细边框），浮在翻页器上；侧边栏页与信息流**同色**（平页，无浮层感）
-- **状态驱动 + 吸附修正**：控制器观察框架自身的 `data-sidebar-collapsed`（AppFrame 稳定属性），状态翻转 ⟷ 翻页；手动滑动结束后按最近页吸附，并同步状态——滑到侧边栏页再选会话，自动翻回聊天页
-- **安全区与键盘**：`viewport-fit=cover` + safe-area env() 变量 + visualViewport 驱动的 `--dshm-keyboard-inset`，输入条悬浮在 Home 指示条与虚拟键盘之上；`100dvh` 动态视口（iOS Safari 地址栏安全）
-- **触控优化**：页头/输入条/侧边栏行按钮 ≥36px 命中高度、粗指针隐藏滚动条、`overscroll-behavior` 防回弹、翻页滚动条隐藏
+- **PiUI 翻页器**：≤768px 时三栏框架重排为两页横向 snap 轨道——侧边栏页半开宽（约半个视口），聊天页全宽；**滑到侧边栏页时聊天卡片在右半露出（半边信息流）**，PiUI 同款结构
+- **侧边栏常开**：初始就停在侧边栏页（控制器在窄屏自动展开 AppFrame 自动折叠的侧边栏），不用任何开关动作；左滑 → 聊天全屏，右滑 → 回侧边栏页
+- **两张卡片**：侧边栏与聊天各是圆角（16px）+ 阴影卡片，同色背景
+- **PiUI 3D 翻页**：滚动时聊天卡片 `rotateY/scale` 跟随（`transform-origin` 偏向滑动侧），`prefers-reduced-motion` 关闭
+- **吸附修正**：滑动停止后自动吸附最近整页，跨过中点还会同步框架状态——永不卡半页
+- **安全区与键盘**：`viewport-fit=cover` + safe-area env() 变量 + visualViewport 驱动的 `--dshm-keyboard-inset`；`100dvh` 动态视口
 - **原生视觉**：桌面宽度下逐字节等同原生（全部规则以 `<html data-dsh-mobile>` 为作用域，卸载即恢复原样）
 
 ## 效果
 
-| 桌面（原生三栏） | 手机（聊天页） | 手机（滑到侧边栏页） |
+| 桌面（原生三栏） | 手机（侧边栏半开，聊天露半边） | 手机（聊天全屏） |
 |---|---|---|
-| ![桌面原生](screenshots/desktop-native.png) | ![聊天页](screenshots/mobile-chat-page.png) | ![侧边栏页](screenshots/mobile-sidebar-page.png) |
+| ![桌面原生](screenshots/desktop-native.png) | ![侧边栏半开](screenshots/mobile-sidebar-page.png) | ![聊天全屏](screenshots/mobile-chat-page.png) |
 
 ## 安装
 
@@ -30,14 +29,14 @@ dsh plugin --profile web add link:E:/dev/dsh-mobile
 
 ## 使用
 
-- **打开侧边栏**：手指**向右拖**（聊天页 → 侧边栏页，跨过中点自动吸附整页）；或点左上角 ☰
-- **返回聊天**：手指**向左拖**；或再点 ☰；在侧边栏页选了会话后自动翻回
+- **初始**：侧边栏半开常驻（左侧卡片 + 右侧半边聊天）
+- **聊天全屏**：手指向左拖；**回侧边栏**：手指向右拖（跨过中点自动吸附整页）；或点左上角 ☰
 - **桌面不受影响**：≥769px 时 ☰ 隐藏，框架恢复三栏
 
 ## 设计约束（为什么是 CSS + 轻量控制器，而不是替换 root）
 
 - dsh 的 `root` 槽位是框架内建的 `single` 槽，由 ui-layout 独占——插件不能替换 AppFrame（`single slot already has a registration` 直接抛错）
-- 因此翻页器直接作用于 **AppFrame 本身**：CSS 把 grid 轨道重排为两页（`100% 100% 0`）+ `overflow-x: auto` + `scroll-snap`，控制器只滚动它、镜像页面状态、并在滑动结束后吸附+同步——全部基于稳定 data 属性（`data-sidebar-collapsed` / `data-details-collapsed`，rc.2 与工作区快照一致）与对话骨架的 data 座位，**不依赖任何哈希类名**
+- 因此翻页器直接作用于 **AppFrame 本身**：CSS 把 grid 轨道重排为两页（`min(360px, 50vw) 100% 0`）+ `overflow-x: auto` + `scroll-snap`，控制器只滚动它、镜像页面状态、并在滑动结束后吸附+同步——全部基于稳定 data 属性（`data-sidebar-collapsed` / `data-details-collapsed`，rc.2 与工作区快照一致）与对话骨架的 data 座位，**不依赖任何哈希类名**
 - **已知限制**：详情列在窄屏下仍遵循框架让步链自动关闭（核心行为，插件不越权），故 pager 只有两页
 - 键盘 inset 依赖 `visualViewport`（现代浏览器/PWA 均有）；不支持时退化为 0
 

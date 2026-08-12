@@ -1,18 +1,19 @@
 /**
  * DOM-side mobile controller: the non-React half of the plugin. Owns the
  * pieces the frame itself cannot express — the viewport meta upgrade, the
- * safe-area/keyboard CSS variables, the pager's live state (page mirror,
- * 3D flip variables), and the plugin's own chrome (the fixed top-left
- * sidebar button). Everything it installs is removed by dispose(), and every
- * rule it depends on is scoped under the [data-dsh-mobile] attribute it sets
- * on <html>.
+ * safe-area/keyboard CSS variables, the pager page mirror, and the plugin's
+ * own chrome (the fixed top-left sidebar button). Everything it installs is
+ * removed by dispose(), and every rule it depends on is scoped under the
+ * [data-dsh-mobile] attribute it sets on <html>.
  *
- * Mobile layout follows PiUI's chat pager: the STOCK AppFrame becomes a
- * horizontal scroll-snap pager whose columns are the pages (sidebar | chat).
- * The controller mirrors the frame's own state (data-sidebar-collapsed) as
- * the current page and scrolls to match, and — like PiUI's pager — re-snaps
- * and reconciles state after a manual swipe settles, so a half-finished
- * swipe always lands on a whole page.
+ * Mobile layout follows PiUI's chat pager with the sidebar left OPEN: the
+ * STOCK AppFrame becomes a horizontal scroll-snap pager whose columns are
+ * two cards — a half-open sidebar page and a full-width chat page that stays
+ * visible beside it. The controller expands the auto-collapsed sidebar once
+ * below the breakpoint (AppFrame collapses it to the rail on narrow
+ * viewports), mirrors the frame's state as the current page, flips the pager
+ * when the state changes, and — like PiUI — re-snaps and reconciles state
+ * after a manual swipe settles.
  */
 
 /** The narrow breakpoint the pager keys off (PiUI's 768px). */
@@ -57,8 +58,8 @@ function findFrame(): HTMLElement | null {
 
 /**
  * The pager's chat-page snap position: the rendered width of the sidebar
- * page column (a full-width page). Falls back to the frame's own width while
- * the layout has not settled (offsetWidth is 0 before first layout).
+ * page column (the half-open card). Falls back to the frame's own width
+ * while the layout has not settled (offsetWidth is 0 before first layout).
  */
 function chatPageLeft(frame: HTMLElement): number {
   const sidebar = frame.firstElementChild
@@ -74,10 +75,8 @@ export interface MobileControllerOptions {
 
 /** Test-facing surface of the controller (the class keeps everything else private). */
 export interface MobileControllerHandle {
-  /** True while the pager sits on the sidebar page (by scroll position). */
+  /** True while the frame shows the sidebar expanded (not the rail). */
   isSidebarOpen(): boolean
-  /** Return to the chat page when the sidebar page is open (a session pick). */
-  returnToChat(): void
   /** Install the controller; idempotent. */
   mount(): void
   /** Remove every DOM effect; idempotent. */
@@ -95,8 +94,10 @@ export class MobileController implements MobileControllerHandle {
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
   #keyboardFrame: number | null = null
+  #mountFrame: number | null = null
   #resizeTimer: number | null = null
   #settleTimer: number | null = null
+  #expandPending = false
   #mounted = false
   #disposed = false
 
@@ -105,28 +106,10 @@ export class MobileController implements MobileControllerHandle {
     this.#options = options
   }
 
-  /** True while the pager sits on the sidebar page (reads the actual scroll
-   *  position, not the state mirror: the user can swipe there without the
-   *  frame's collapse state changing). */
+  /** True while the frame shows the sidebar expanded (not the rail). */
   isSidebarOpen(): boolean {
     const frame = findFrame()
-    if (frame === null || !(this.#mql?.matches ?? false)) return false
-    return frame.scrollLeft < chatPageLeft(frame) / 2
-  }
-
-  /** Return to the chat page (a session picked from the sidebar). Two entry
-   *  shapes: the sidebar was opened through the menu (frame expanded — flip
-   *  the state back and let the observer slide the pager), or the user just
-   *  swiped there (frame still collapsed — scroll back directly). */
-  returnToChat(): void {
-    if (!this.isSidebarOpen()) return
-    const frame = findFrame()
-    if (frame === null) return
-    if (frame.hasAttribute('data-sidebar-collapsed')) {
-      frame.scrollTo({ left: chatPageLeft(frame), behavior: 'smooth' })
-    } else {
-      this.#options.toggleSidebar()
-    }
+    return frame !== null && !frame.hasAttribute('data-sidebar-collapsed')
   }
 
   /** Install the controller. Safe to call once; a second call is a no-op.
@@ -145,7 +128,7 @@ export class MobileController implements MobileControllerHandle {
     document.body.append(this.#fab)
 
     this.#mql = window.matchMedia(MOBILE_BREAKPOINT)
-    this.#mql.addEventListener('change', this.#onMqlChange)
+    this.#mql.addEventListener('change', this.#onBreakpointChange)
 
     // Keyboard inset: the visual viewport shrinks when the OS keyboard
     // opens; the composer seat pads itself by the difference (rAF-throttled
@@ -165,10 +148,22 @@ export class MobileController implements MobileControllerHandle {
     }
     this.#ensureFrameObserver()
 
+    // The always-open phone layout: expand the sidebar first (AppFrame
+    // auto-collapses it to the rail on narrow viewports), then place the
+    // pager on the sidebar page without an animation. The rAF pass covers
+    // the case where the frame's narrow flag settles after first paint.
+    this.#ensureSidebarOpen()
     this.#syncPage('auto')
-    // Layout may not have settled yet (offsetWidth is 0): re-sync after
-    // first paint so the initial placement lands on the chat page.
-    requestAnimationFrame(() => { this.#syncPage('auto') })
+    this.#updateAria()
+    // Layout and the frame's narrow flag settle after first paint: expand
+    // the sidebar and re-sync the page then, in case the first pass raced
+    // them. The handle is kept so dispose() can cancel it.
+    this.#mountFrame = requestAnimationFrame(() => {
+      this.#mountFrame = null
+      this.#ensureSidebarOpen()
+      this.#syncPage('auto')
+      this.#updateAria()
+    })
   }
 
   /** Remove every DOM effect; safe to call twice. */
@@ -180,21 +175,22 @@ export class MobileController implements MobileControllerHandle {
     this.#frameObserver = null
     this.#rootObserver?.disconnect()
     this.#rootObserver = null
-    this.#mql?.removeEventListener('change', this.#onMqlChange)
+    this.#mql?.removeEventListener('change', this.#onBreakpointChange)
     this.#mql = null
     window.removeEventListener('resize', this.#onWindowResize)
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
-    for (const timer of [this.#keyboardFrame, this.#resizeTimer, this.#settleTimer]) {
-      if (timer !== null) (timer === this.#keyboardFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer]) {
+      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#keyboardFrame = null
+    this.#mountFrame = null
     this.#resizeTimer = null
     this.#settleTimer = null
     const frame = findFrame()
     if (frame !== null) {
       frame.removeEventListener('scroll', this.#onPagerScroll)
-      for (const prop of ['--dshm-rotate', '--dshm-scale', '--dshm-origin-x']) {
+      for (const prop of ['--dshm-rotate', '--dshm-scale', '--dshm-offset-x', '--dshm-origin-x']) {
         frame.style.removeProperty(prop)
       }
     }
@@ -245,6 +241,25 @@ export class MobileController implements MobileControllerHandle {
     return document.documentElement.lang === 'zh-CN' ? '打开侧边栏' : 'Open sidebar'
   }
 
+  /** The always-open phone layout expands the docked sidebar once when the
+   *  viewport crosses into the mobile breakpoint (AppFrame auto-collapses
+   *  it to the rail there). A later manual collapse is left alone. The
+   *  request is idempotent: repeated calls while one expand is still
+   *  in flight (mount sync pass, rAF pass, late frame) do not re-toggle.
+   *  Seeing the frame actually expanded clears the pending request. */
+  readonly #ensureSidebarOpen = (): void => {
+    if (!(this.#mql?.matches ?? false)) return
+    const frame = findFrame()
+    if (frame === null) return
+    if (!frame.hasAttribute('data-sidebar-collapsed')) {
+      this.#expandPending = false
+      return
+    }
+    if (this.#expandPending) return
+    this.#expandPending = true
+    this.#options.toggleSidebar()
+  }
+
   /** Mirror the state-demanded page on <html> and, on mobile, scroll the
    *  frame to it. `behavior` distinguishes the state-driven flip (smooth)
    *  from initial placement and reflow (auto). */
@@ -265,8 +280,13 @@ export class MobileController implements MobileControllerHandle {
     }
   }
 
-  /** State flips animate the page transition. */
-  readonly #onFrameCollapseChange = (): void => { this.#syncPage('smooth') }
+  /** State flips animate the page transition; an expand that landed clears
+   *  the pending always-open request. */
+  readonly #onFrameCollapseChange = (): void => {
+    if (!findFrame()?.hasAttribute('data-sidebar-collapsed')) this.#expandPending = false
+    this.#syncPage('smooth')
+    this.#updateAria()
+  }
 
   readonly #ensureFrameObserver = (): void => {
     if (this.#frameObserver !== null) return
@@ -277,13 +297,24 @@ export class MobileController implements MobileControllerHandle {
       attributes: true,
       attributeFilter: ['data-sidebar-collapsed'],
     })
-    // Live pager driving (3D flip vars + settle re-snap) rides the frame's
-    // own scroll events.
+    // Live pager driving (3D flip + settle re-snap) rides the frame's own
+    // scroll.
     frame.addEventListener('scroll', this.#onPagerScroll, { passive: true })
+    // A frame that appears after mount (the layout entry loads later) still
+    // gets the always-open treatment.
+    this.#ensureSidebarOpen()
     this.#syncPage('auto')
+    this.#updateAria()
   }
 
-  readonly #onMqlChange = (): void => { this.#syncPage('auto') }
+  /** Crossing the breakpoint: entering mobile re-expands the sidebar (the
+   *  state flip then moves the pager); leaving does nothing — the stock
+   *  layout owns the desktop. */
+  readonly #onBreakpointChange = (): void => {
+    this.#ensureSidebarOpen()
+    this.#syncPage('auto')
+    this.#updateAria()
+  }
 
   /** Width reflow within one breakpoint side: reposition the active page. */
   readonly #onWindowResize = (): void => {
@@ -291,16 +322,14 @@ export class MobileController implements MobileControllerHandle {
     this.#resizeTimer = window.setTimeout(() => {
       this.#resizeTimer = null
       this.#syncPage('auto')
+      this.#updateAria()
     }, 120)
   }
 
-  /**
-   * Live pager driver: PiUI-style 3D flip variables follow the scroll, and
-   * once the scroll settles the pager re-snaps to the nearest whole page —
-   * flipping the frame state when the user's swipe crossed the midpoint, or
-   * nudging the scroll when it stopped just short of one (a half-finished
-   * swipe always lands on a full page).
-   */
+  /** Live pager driver: PiUI's 3D flip vars follow the scroll, and once the
+   *  scroll settles the pager re-snaps to the nearest whole page — flipping
+   *  the frame state when the user's swipe crossed the midpoint, or nudging
+   *  the scroll when it stopped just short of one. */
   readonly #onPagerScroll = (): void => {
     const frame = findFrame()
     const mobile = this.#mql?.matches ?? false
@@ -308,34 +337,45 @@ export class MobileController implements MobileControllerHandle {
     const chatLeft = chatPageLeft(frame)
     if (chatLeft <= 0) return
     const left = frame.scrollLeft
-    // -1 (sidebar) … 0 (chat) — only two pages.
+    // -1 (sidebar page) … 0 (chat page), PiUI's progress.
     const progress = Math.max(-1, Math.min(1, (left - chatLeft) / chatLeft))
-    frame.style.setProperty('--dshm-rotate', `${progress * 8}deg`)
-    frame.style.setProperty('--dshm-scale', `${1 - Math.abs(progress) * 0.05}`)
+    const abs = Math.abs(progress)
+    const right = Math.max(0, progress)
+    frame.style.setProperty('--dshm-rotate', `${progress * 10}deg`)
+    frame.style.setProperty('--dshm-scale', `${1 - abs * 0.06}`)
+    frame.style.setProperty('--dshm-offset-x', `${right * right * -48}px`)
     frame.style.setProperty('--dshm-origin-x', `${50 - progress * 50}%`)
 
     if (this.#settleTimer !== null) window.clearTimeout(this.#settleTimer)
     this.#settleTimer = window.setTimeout(() => {
       this.#settleTimer = null
-      this.#settlePager(frame)
+      this.#settlePager()
     }, SCROLL_SETTLE_MS)
   }
 
-  /** Re-snap the pager to the nearest whole page after a manual swipe. */
-  readonly #settlePager = (frame: HTMLElement): void => {
+  readonly #settlePager = (): void => {
+    const frame = findFrame()
+    const mobile = this.#mql?.matches ?? false
+    if (frame === null || !mobile) return
     const chatLeft = chatPageLeft(frame)
     if (chatLeft <= 0) return
     const left = frame.scrollLeft
     const nearest: MobilePage = left < chatLeft / 2 ? 'sidebar' : 'chat'
     const target = nearest === 'sidebar' ? 0 : chatLeft
-    // A swipe that crossed the midpoint flips the frame state (the observer
-    // then animates to the target); otherwise nudge a short-of-page stop.
     const statePage: MobilePage = frame.hasAttribute('data-sidebar-collapsed') ? 'chat' : 'sidebar'
     if (nearest !== statePage) {
+      // A swipe that crossed the midpoint flips the state (the observer
+      // then animates to the target).
       this.#options.toggleSidebar()
     } else if (Math.abs(left - target) > 4) {
+      // A stop just short of a page: nudge it to the whole page.
       frame.scrollTo({ left: target, behavior: 'smooth' })
     }
+  }
+
+  /** Mirror the sidebar open state on the button's aria-expanded. */
+  readonly #updateAria = (): void => {
+    this.#fab?.setAttribute('aria-expanded', String(this.isSidebarOpen()))
   }
 
   readonly #requestKeyboard = (): void => {

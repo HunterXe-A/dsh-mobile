@@ -1,32 +1,28 @@
 /**
  * Browser half of the dsh-mobile plugin: mounts the DOM-side mobile
- * controller (viewport meta, safe-area/keyboard insets, pager page mirror,
- * fixed top-left sidebar button). The global mobile sheet (mobile.css) is
- * injected with this bundle as a <style data-plugin> tag and removed on
- * unload — the stock GUI stays byte-identical without the plugin row.
+ * controller (viewport meta, safe-area/keyboard insets, sidebar-button
+ * chrome) and expands the docked sidebar once below the breakpoint. The
+ * global mobile sheet (mobile.css) is injected with this bundle as a
+ * <style data-plugin> tag and removed on unload — the stock GUI stays
+ * byte-identical without the plugin row.
  *
- * Mobile layout follows PiUI's chat pager: the stock three-column frame
- * becomes a horizontal scroll-snap pager (sidebar | chat), the chat column
- * renders completely untouched, and the fixed top-left button flips the
- * pager through the frame's own layout action.
+ * Mobile layout is the desktop layout resized and carded: the stock frame
+ * keeps its docked sidebar open as a half-open card beside the chat card —
+ * no paging, no drawer, no slot changes.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only: pulls the layout plugin's Context merge (ctx.layout) and the
-// sessions service surface into this compilation unit.
+// Type-only: pulls the layout plugin's Context merge (ctx.layout) into this
+// compilation unit.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-runtime/client'
 import { MobileController } from './controller.ts'
 // Plugin-owned global mobile sheet (injected as a <style data-plugin> tag).
 import './mobile.css'
 
 /** Services required by the mobile plugin. */
-export const inject = ['layout', 'sessions']
+export const inject = ['layout']
 
 /**
- * Install the mobile surfaces: the DOM controller (one effect). A
- * current-session change (a session picked from the sidebar page, or a new
- * session started) flips back to the chat page — list updates that do not
- * move `current` (running flags, titles) leave it alone.
+ * Install the mobile surfaces: the DOM controller (one effect).
  * @param ctx - Client root context.
  */
 export function apply(ctx: ClientContext): void {
@@ -35,16 +31,6 @@ export function apply(ctx: ClientContext): void {
       toggleSidebar: () => ctx.layout.toggleSidebar(),
     })
     controller.mount()
-    let lastCurrent = ctx.sessions.list.getSnapshot().current
-    const off = ctx.sessions.list.subscribe(() => {
-      const next = ctx.sessions.list.getSnapshot().current
-      if (next === lastCurrent) return
-      lastCurrent = next
-      controller.returnToChat()
-    })
-    return () => {
-      off()
-      controller.dispose()
-    }
+    return () => { controller.dispose() }
   }, 'dsh-mobile: DOM controller')
 }

@@ -7,16 +7,17 @@
    the frame div itself carries in both the workspace snapshot and the
    official rc.2 bundles), the conversation skeleton's data seats
    ([data-phase], [data-conversation-scroll], [data-composer-seat],
-   [data-composer-card]), the sidebar's [role=treeitem] rows, and the drag
-   handles' data-side attribute. No hashed class names — the same sheet must
-   work against unpatched distributions.
+   [data-composer-card]), and the drag handles' data-side attribute. No
+   hashed class names — the same sheet must work against unpatched
+   distributions.
 
-   Mobile layout follows PiUI's chat pager: the STOCK AppFrame becomes a
-   horizontal scroll-snap pager whose columns are the pages. Two full-width
-   pages — sidebar | chat — where the chat column is a flush rounded card
-   (PiUI's rounded-xl shadow surface) with a PiUI-style 3D flip driven by
-   the controller's scroll variables, and the sidebar page shares the chat
-   background as a plain page. The chat column renders completely untouched. */
+   Mobile layout follows PiUI's chat pager with the sidebar left OPEN: the
+   STOCK frame becomes a horizontal scroll-snap pager of two cards — the
+   sidebar page is a half-open card (the desktop docked width capped at 55vw,
+   PiUI's overlayWidth idea) and the chat page is full-width, so swiping to
+   the sidebar still shows the chat peeking out on the right. Both cards are
+   rounded and shadowed, PiUI style. The controller keeps the sidebar
+   expanded (native wide rendering) and flips the pager on state changes. */
 
 /* ---------- tokens ---------- */
 [data-dsh-mobile] {
@@ -28,9 +29,14 @@
   --dshm-safe-left: env(safe-area-inset-left, 0px);
   /* Virtual-keyboard inset, driven by the controller (visualViewport). */
   --dshm-keyboard-inset: 0px;
-  /* PiUI-style 3D flip, driven by the controller on scroll. */
+  /* Sidebar page width: PiUI's half-open card — about half the viewport
+     (capped at the 360px PiUI uses), so the chat card stays visible beside
+     it after swiping to the sidebar. */
+  --dshm-sidebar-width: min(360px, 50vw);
+  /* PiUI-style 3D flip of the chat card, driven by the controller on scroll. */
   --dshm-rotate: 0deg;
   --dshm-scale: 1;
+  --dshm-offset-x: 0px;
   --dshm-origin-x: 50% 50%;
   -webkit-tap-highlight-color: transparent;
 }
@@ -52,9 +58,9 @@
 
 /* ---------- plugin-owned chrome (controller DOM) ---------- */
 
-/* The fixed top-left sidebar button (PiUI's header-left placement): a small
-   floating card, visible in every phase — inside the session header (which
-   the header's left padding clears) and over the no-session hero. */
+/* The fixed top-left sidebar button (PiUI's header-left placement): toggles
+   the sidebar page. Flat in the active session header (which clears it via
+   left padding), a small floating card over the no-session hero. */
 [data-dsh-mobile] [data-dshm-fab-menu] {
   position: fixed;
   top: calc(8px + var(--dshm-safe-top));
@@ -90,12 +96,12 @@
 @media (max-width: 768px) {
   /* The AppFrame keeps at least one of its two data attributes in every
      state; the union selects the frame on any viewport. Reflow the grid
-     tracks into two full-width snap pages (sidebar | chat); the details
-     track is dropped to zero — it has no phone use. The frame scrolls
-     horizontally only. */
+     tracks into two snap pages: the sidebar page at the half-open width,
+     the chat page full-width (so the chat stays visible beside the
+     sidebar), the details track dropped (no phone use). */
   [data-dsh-mobile] #root > div[data-sidebar-collapsed],
   [data-dsh-mobile] #root > div[data-details-collapsed] {
-    grid-template-columns: 100% 100% 0 !important;
+    grid-template-columns: var(--dshm-sidebar-width) 100% 0 !important;
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
@@ -119,28 +125,34 @@
     scroll-snap-stop: always;
   }
 
-  /* Sidebar page: a plain full-width page sharing the chat background, with
-     safe-area top so its controls clear the notch. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
-    background: var(--dsw-alias-bg-base);
-    padding-top: var(--dshm-safe-top);
-  }
-
-  /* Chat page: the PiUI rounded card, flush with the viewport — rounded,
-     shadowed, clipping its content to the radius — with the 3D flip applied
-     to the card itself while the pager scrolls (vars driven by the
-     controller). The conversation renders completely untouched inside. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(2),
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(2) {
+  /* Both pages render as cards: rounded, shadowed, clipped to the radius,
+     sharing the chat background. The chat card carries PiUI's 3D flip
+     (rotateY/scale vars driven by the controller on scroll). */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(-n+2),
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(-n+2) {
     border: 1px solid var(--dsw-alias-border-l2);
     border-radius: 16px;
     overflow: hidden;
     background: var(--dsw-alias-bg-base);
     box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
-    transform: perspective(1200px) rotateY(var(--dshm-rotate)) scale(var(--dshm-scale));
-    transform-origin: var(--dshm-origin-x) 50%;
+  }
+
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(2),
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(2) {
+    transform: translate3d(var(--dshm-offset-x, 0px), 0, 0)
+      rotateY(var(--dshm-rotate, 0deg))
+      scale(var(--dshm-scale, 1));
+    transform-origin: var(--dshm-origin-x, 50% 50%);
+    transform-style: preserve-3d;
+    backface-visibility: hidden;
     will-change: transform;
+  }
+
+  /* Sidebar card clears the notch; the chat card's header handles its own
+     top via the safe-area header padding. */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
+    padding-top: var(--dshm-safe-top);
   }
 
   /* Drag handles are desktop-only affordances. */
@@ -149,7 +161,7 @@
   }
 
   /* Session header: compact with a safe-area top, and left padding that
-     clears the fixed sidebar button (PiUI header-left placement). */
+     clears the fixed sidebar button. */
   [data-dsh-mobile] [data-phase='active'] > header {
     padding: calc(6px + var(--dshm-safe-top)) 8px 0 calc(48px + var(--dshm-safe-left));
   }
@@ -193,12 +205,9 @@
   }
 }
 
-/* Respect reduced-motion: no 3D flip, and programmatic flips snap instead
-   of sliding. */
+/* Respect reduced-motion: programmatic flips snap instead of sliding. */
 @media (prefers-reduced-motion: reduce) {
   [data-dsh-mobile] {
-    --dshm-rotate: 0deg !important;
-    --dshm-scale: 1 !important;
     scroll-behavior: auto !important;
   }
 }
