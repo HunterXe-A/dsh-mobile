@@ -1,0 +1,203 @@
+/* dsh-mobile global sheet — every rule is scoped under [data-dsh-mobile]
+   (set on <html> by the controller at apply), so uninstalling the plugin
+   leaves the stock GUI byte-identical.
+
+   Selectors key off stable, version-independent hooks only: the AppFrame's
+   data-* attributes (data-sidebar-collapsed / data-details-collapsed, which
+   the frame div itself carries in both the workspace snapshot and the
+   official rc.2 bundles), the conversation skeleton's data seats
+   ([data-phase], [data-conversation-scroll], [data-composer-seat],
+   [data-composer-card]), the sidebar's [role=treeitem] rows, and the drag
+   handles' data-side attribute. No hashed class names — the same sheet must
+   work against unpatched distributions. */
+
+/* ---------- tokens ---------- */
+[data-dsh-mobile] {
+  /* Safe-area insets (notched phones, standalone PWA). env() resolves to
+     0px in browsers without the concept, so desktop is unaffected. */
+  --dshm-safe-top: env(safe-area-inset-top, 0px);
+  --dshm-safe-right: env(safe-area-inset-right, 0px);
+  --dshm-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --dshm-safe-left: env(safe-area-inset-left, 0px);
+  /* Virtual-keyboard inset, driven by the controller (visualViewport). */
+  --dshm-keyboard-inset: 0px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- shell ergonomics ---------- */
+[data-dsh-mobile] body {
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Browsers with dvh use the dynamic viewport: iOS Safari URL-bar safe. */
+@supports (height: 100dvh) {
+  [data-dsh-mobile] body,
+  [data-dsh-mobile] #root {
+    height: 100dvh;
+  }
+}
+
+/* ---------- plugin-owned chrome (controller DOM) ---------- */
+
+/* Drawer backdrop: invisible until the drawer opens. */
+[data-dsh-mobile] [data-dshm-backdrop] {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: color-mix(in srgb, var(--dsw-static-neutral-1000) 42%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+[data-dsh-mobile][data-dshm-drawer='open'] [data-dshm-backdrop] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The session-header menu button (slot entry) and the hero FAB share one
+   compact ghost-circle look. */
+[data-dsh-mobile] [data-dshm-menu],
+[data-dsh-mobile] [data-dshm-fab-menu] {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+[data-dsh-mobile] [data-dshm-menu]:active,
+[data-dsh-mobile] [data-dshm-fab-menu]:active {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* The header menu button is a phone-only affordance (desktop already shows
+   the sidebar). */
+@media (min-width: 769px) {
+  [data-dsh-mobile] [data-dshm-menu] {
+    display: none;
+  }
+}
+
+/* Hero FAB: fixed top-left, visible only while the conversation column is in
+   its no-session hero phase (the session header — and its menu button —
+   does not exist there). */
+[data-dsh-mobile] [data-dshm-fab-menu] {
+  position: fixed;
+  top: calc(8px + var(--dshm-safe-top));
+  left: calc(8px + var(--dshm-safe-left));
+  z-index: 45;
+  display: none;
+  background: var(--dsw-alias-button-floating-fill);
+  border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--dsw-static-neutral-1000) 12%, transparent);
+}
+
+@media (max-width: 768px) {
+  [data-dsh-mobile] body:has([data-phase='hero']) [data-dshm-fab-menu] {
+    display: inline-flex;
+  }
+}
+
+/* ---------- mobile layout (narrow viewports) ---------- */
+
+@media (max-width: 768px) {
+  /* The AppFrame keeps at least one of its two data attributes in every
+     state; the union selects the frame on any viewport. Force a single
+     column: the chat fills the screen, the sidebar drawer and the details
+     page overlay it. */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed],
+  [data-dsh-mobile] #root > div[data-details-collapsed] {
+    grid-template-columns: 0 minmax(0, 1fr) 0 !important;
+    overscroll-behavior: contain;
+  }
+
+  /* Drag handles are desktop-only affordances. */
+  [data-dsh-mobile] [data-side] {
+    display: none !important;
+  }
+
+  /* Sidebar column → slide-in drawer. The rail and the expanded column share
+     this one box; translateX hides it off the left edge when closed. */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: min(90vw, 340px);
+    max-width: 100%;
+    box-sizing: border-box;
+    padding-top: var(--dshm-safe-top);
+    border-right: 1px solid var(--dsw-alias-border-l1);
+    background: var(--dsw-specific-sidebar-fill);
+    box-shadow: 0 0 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 22%, transparent);
+    transform: translateX(-105%);
+    transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+    will-change: transform;
+  }
+
+  [data-dsh-mobile][data-dshm-drawer='open'] #root > div[data-sidebar-collapsed] > :first-child,
+  [data-dsh-mobile][data-dshm-drawer='open'] #root > div[data-details-collapsed] > :first-child {
+    transform: translateX(0);
+  }
+
+  /* Session header: compact with a safe-area top. */
+  [data-dsh-mobile] [data-phase='active'] > header {
+    padding: calc(6px + var(--dshm-safe-top)) 8px 0 8px;
+  }
+
+  /* Conversation column: snugger side clearance for the composer card. */
+  [data-dsh-mobile] [data-phase] {
+    --dsh-composer-side-clearance: 12px;
+  }
+
+  /* Sticky composer seat: lift the input card above the home indicator and
+     the virtual keyboard (both insets are 0 outside mobile contexts). */
+  [data-dsh-mobile] [data-composer-seat] {
+    padding-bottom: calc(var(--dshm-safe-bottom) + var(--dshm-keyboard-inset));
+  }
+
+  /* Hidden scrollbars are the norm on phones: no reserved gutter, no bars. */
+  [data-dsh-mobile] [data-conversation-scroll] {
+    scrollbar-gutter: auto;
+  }
+
+  /* Touch targets: every button except tab/switch chrome gets at least
+     32px of hit height (the PiUI mobile baseline). */
+  [data-dsh-mobile] button:not([role='tab']):not([role='switch']) {
+    min-height: 32px;
+  }
+}
+
+/* Coarse pointers (touch) never hover: drop scrollbars entirely. */
+@media (pointer: coarse) {
+  [data-dsh-mobile] * {
+    scrollbar-width: none;
+  }
+
+  [data-dsh-mobile] *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+}
+
+/* Respect reduced-motion: drawers snap instead of sliding. */
+@media (prefers-reduced-motion: reduce) {
+  [data-dsh-mobile] [data-dshm-backdrop],
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
+    transition: none;
+  }
+}
