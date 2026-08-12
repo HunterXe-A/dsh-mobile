@@ -93,11 +93,18 @@
 
   /* Sidebar page: a plain page sharing the chat background — flat, no card
      treatment — with safe-area top so its controls clear the notch. The
-     chat card's radius and shadow are what separate the two (PiUI). */
+     chat card's radius and shadow are what separate the two (PiUI). The
+     sidebar column itself is already bg-base; the sidebar shell's own fill
+     is reset to transparent so every layer of the sidebar matches the chat. */
   [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
   [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
     background: var(--dsw-alias-bg-base);
     padding-top: var(--dshm-safe-top);
+  }
+
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child > :first-child,
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child > :first-child {
+    background: transparent;
   }
 
   /* Chat page: the PiUI rounded card — rounded, shadowed, clipped to the
