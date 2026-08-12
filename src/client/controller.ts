@@ -1,25 +1,27 @@
 /**
  * DOM-side mobile controller: the non-React half of the plugin. Owns the
- * pieces the frame itself cannot express — the viewport meta upgrade and
- * the safe-area/keyboard CSS variables. Everything it installs is removed by
+ * pieces the frame itself cannot express — the viewport meta upgrade, the
+ * safe-area/keyboard CSS variables, and the pager's live state (page mirror,
+ * 3D flip vars, click-to-return). Everything it installs is removed by
  * dispose(), and every rule it depends on is scoped under the
  * [data-dsh-mobile] attribute it sets on <html>.
  *
  * Mobile layout follows PiUI's chat pager: the STOCK AppFrame becomes a
- * horizontal scroll-snap pager whose columns are two pages — a half-open
- * sidebar page and a full-width chat page that stays visible beside it.
- * The controller's only frame interaction is to expand the auto-collapsed
- * sidebar ONCE below the breakpoint (AppFrame collapses it to the rail on
- * narrow viewports) and leave it there: the sidebar column then keeps its
- * full content rendered at all times, so swiping to it never triggers a
- * late render — the pager is a pure visual scroll. Manual swipes are never
- * state-synced; the settle handler only re-snaps a short-of-page stop.
+ * horizontal scroll-snap pager whose columns are two pages — an always-open
+ * sidebar page and a full-width chat page. The frame's own state is only
+ * touched to expand the auto-collapsed sidebar ONCE below the breakpoint
+ * (AppFrame collapses it to the rail on narrow viewports); from then on the
+ * pager position is fully user-driven: the app starts on the chat page,
+ * a click on the exposed chat card flips back to it, and picking a session
+ * in the sidebar returns to it. The sidebar column keeps its full content
+ * rendered at all times (a swipe is never state-synced, so it never
+ * re-renders).
  */
 
 /** The narrow breakpoint the pager keys off (PiUI's 768px). */
 export const MOBILE_BREAKPOINT = '(max-width: 768px)'
 
-/** The <html> attribute that mirrors the pager page the state demands. */
+/** The <html> attribute that mirrors the pager page the frame is resting on. */
 export const PAGE_ATTR = 'data-dshm-page'
 
 /** Pager page names (the mirror values of PAGE_ATTR). */
@@ -50,7 +52,7 @@ function findFrame(): HTMLElement | null {
 
 /**
  * The pager's chat-page snap position: the rendered width of the sidebar
- * page column (the half-open card). Falls back to the frame's own width
+ * page column (the always-open card). Falls back to the frame's own width
  * while the layout has not settled (offsetWidth is 0 before first layout).
  */
 function chatPageLeft(frame: HTMLElement): number {
@@ -69,6 +71,8 @@ export interface MobileControllerOptions {
 export interface MobileControllerHandle {
   /** True while the frame shows the sidebar expanded (not the rail). */
   isSidebarOpen(): boolean
+  /** Return to the chat page (a session picked in the sidebar). */
+  returnToChat(): void
   /** Install the controller; idempotent. */
   mount(): void
   /** Remove every DOM effect; idempotent. */
@@ -103,6 +107,12 @@ export class MobileController implements MobileControllerHandle {
     return frame !== null && !frame.hasAttribute('data-sidebar-collapsed')
   }
 
+  /** Return to the chat page (a session picked in the sidebar). Pure scroll —
+   *  the sidebar state is untouched, so its content stays rendered. */
+  returnToChat(): void {
+    this.#placeOnChat('smooth')
+  }
+
   /** Install the controller. Safe to call once; a second call is a no-op.
    *  The frame may not exist yet (the layout entry mounts after this
    *  plugin's apply), so the observer chain re-finds it when #root gains
@@ -130,6 +140,10 @@ export class MobileController implements MobileControllerHandle {
     // a breakpoint side (rotation / split-screen reflows the page tracks).
     window.addEventListener('resize', this.#onWindowResize)
 
+    // A tap on the exposed chat card (while the pager rests on the sidebar
+    // page) returns to the chat page — PiUI's overlay behavior.
+    document.addEventListener('click', this.#onDocClickCapture, true)
+
     const root = document.getElementById('root')
     if (root !== null) {
       this.#rootObserver = new MutationObserver(() => { this.#ensureFrameObserver() })
@@ -137,16 +151,15 @@ export class MobileController implements MobileControllerHandle {
     }
     this.#ensureFrameObserver()
 
-    // The always-open phone layout: expand the sidebar first (AppFrame
-    // auto-collapses it to the rail on narrow viewports), then place the
-    // pager on the sidebar page without an animation. The rAF pass covers
-    // the case where the frame's narrow flag settles after first paint.
+    // The always-open phone layout: expand the sidebar once (AppFrame
+    // auto-collapses it to the rail on narrow viewports) so its content
+    // stays fully rendered, then start on the CHAT page.
     this.#ensureSidebarOpen()
-    this.#syncPage('auto')
+    this.#placeOnChat('auto')
     this.#mountFrame = requestAnimationFrame(() => {
       this.#mountFrame = null
       this.#ensureSidebarOpen()
-      this.#syncPage('auto')
+      this.#placeOnChat('auto')
     })
   }
 
@@ -164,6 +177,7 @@ export class MobileController implements MobileControllerHandle {
     window.removeEventListener('resize', this.#onWindowResize)
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
+    document.removeEventListener('click', this.#onDocClickCapture, true)
     for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer]) {
       if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
@@ -222,41 +236,35 @@ export class MobileController implements MobileControllerHandle {
     this.#options.toggleSidebar()
   }
 
-  /** Mirror the state-demanded page on <html> and, on mobile, scroll the
-   *  frame to it. `behavior` distinguishes the state-driven flip (smooth)
-   *  from initial placement and reflow (auto). Leaving the mobile breakpoint
-   *  clears the 3D flip vars so the desktop layout renders flat. */
-  readonly #syncPage = (behavior: ScrollBehavior): void => {
-    const html = this.#html
-    if (html === null) return
-    const mobile = this.#mql?.matches ?? false
+  /** Scroll the pager to the chat page and mirror the resting page. */
+  readonly #placeOnChat = (behavior: ScrollBehavior): void => {
     const frame = findFrame()
-    const page: MobilePage = !mobile || frame === null || frame.hasAttribute('data-sidebar-collapsed')
-      ? 'chat'
-      : 'sidebar'
-    html.setAttribute(PAGE_ATTR, page)
-    if (frame === null || !mobile) {
-      // Desktop: the stock layout owns the columns; drop any leftover flip.
-      for (const prop of ['--dshm-rotate', '--dshm-scale', '--dshm-offset-x', '--dshm-origin-x']) {
-        frame?.style.removeProperty(prop)
-      }
-      return
+    const mobile = this.#mql?.matches ?? false
+    if (frame === null || !mobile) return
+    const chatLeft = chatPageLeft(frame)
+    if (chatLeft <= 0) return
+    if (Math.abs(frame.scrollLeft - chatLeft) > 2) {
+      frame.scrollTo({ left: chatLeft, behavior })
     }
-    const left = page === 'sidebar' ? 0 : chatPageLeft(frame)
-    if (Math.abs(frame.scrollLeft - left) > 2) {
-      frame.scrollTo({ left, behavior })
-    }
-    // The 3D flip vars must reflect the resting position too — an initial
-    // placement on the sidebar page (or a state flip) does not fire a
-    // scroll event, so the chat card would otherwise sit at rotateY(0).
+    this.#mirrorPage(frame, 'chat')
     this.#updateFlipVars(frame)
   }
 
-  /** State flips animate the page transition; an expand that landed clears
-   *  the pending always-open request. */
+  /** Mirror the page the pager is resting on (scroll position decides). */
+  readonly #mirrorPage = (frame: HTMLElement, hint?: MobilePage): void => {
+    const html = this.#html
+    if (html === null) return
+    const chatLeft = chatPageLeft(frame)
+    const page: MobilePage = chatLeft <= 0
+      ? (hint ?? 'chat')
+      : frame.scrollLeft < chatLeft / 2 ? 'sidebar' : 'chat'
+    html.setAttribute(PAGE_ATTR, page)
+  }
+
+  /** State flips no longer drive the pager (the page is user-driven); an
+   *  expand that landed just clears the pending always-open request. */
   readonly #onFrameCollapseChange = (): void => {
     if (!findFrame()?.hasAttribute('data-sidebar-collapsed')) this.#expandPending = false
-    this.#syncPage('smooth')
   }
 
   readonly #ensureFrameObserver = (): void => {
@@ -268,28 +276,46 @@ export class MobileController implements MobileControllerHandle {
       attributes: true,
       attributeFilter: ['data-sidebar-collapsed'],
     })
-    // Live pager settle re-snap rides the frame's own scroll.
+    // Live pager driving (3D flip + settle re-snap) rides the frame's own
+    // scroll.
     frame.addEventListener('scroll', this.#onPagerScroll, { passive: true })
     // A frame that appears after mount (the layout entry loads later) still
-    // gets the always-open treatment.
+    // gets the always-open treatment and starts on the chat page.
     this.#ensureSidebarOpen()
-    this.#syncPage('auto')
+    this.#placeOnChat('auto')
   }
 
-  /** Crossing the breakpoint: entering mobile re-expands the sidebar (the
-   *  state flip then moves the pager); leaving does nothing — the stock
-   *  layout owns the desktop. */
+  /** Crossing the breakpoint: entering mobile re-expands the sidebar and
+   *  places the pager on the chat page; leaving clears the 3D flip vars so
+   *  the desktop layout renders flat. */
   readonly #onBreakpointChange = (): void => {
+    const mobile = this.#mql?.matches ?? false
+    const frame = findFrame()
+    if (!mobile) {
+      for (const prop of ['--dshm-rotate', '--dshm-scale', '--dshm-offset-x', '--dshm-origin-x']) {
+        frame?.style.removeProperty(prop)
+      }
+      this.#html?.removeAttribute(PAGE_ATTR)
+      return
+    }
     this.#ensureSidebarOpen()
-    this.#syncPage('auto')
+    this.#placeOnChat('auto')
   }
 
-  /** Width reflow within one breakpoint side: reposition the active page. */
+  /** Width reflow within one breakpoint side: keep the active page put. */
   readonly #onWindowResize = (): void => {
     if (this.#resizeTimer !== null) return
     this.#resizeTimer = window.setTimeout(() => {
       this.#resizeTimer = null
-      this.#syncPage('auto')
+      const frame = findFrame()
+      const mobile = this.#mql?.matches ?? false
+      if (frame === null || !mobile) return
+      const chatLeft = chatPageLeft(frame)
+      if (chatLeft <= 0) return
+      const onChat = frame.scrollLeft >= chatLeft / 2
+      frame.scrollTo({ left: onChat ? chatLeft : 0, behavior: 'auto' })
+      this.#mirrorPage(frame)
+      this.#updateFlipVars(frame)
     }, 120)
   }
 
@@ -303,6 +329,7 @@ export class MobileController implements MobileControllerHandle {
     const mobile = this.#mql?.matches ?? false
     if (frame === null || !mobile) return
     this.#updateFlipVars(frame)
+    this.#mirrorPage(frame)
     if (this.#settleTimer !== null) window.clearTimeout(this.#settleTimer)
     this.#settleTimer = window.setTimeout(() => {
       this.#settleTimer = null
@@ -336,6 +363,25 @@ export class MobileController implements MobileControllerHandle {
     const target = nearest === 'sidebar' ? 0 : chatLeft
     if (Math.abs(left - target) > 4) {
       frame.scrollTo({ left: target, behavior: 'smooth' })
+    }
+    this.#mirrorPage(frame)
+  }
+
+  /** A tap on the exposed chat card returns to the chat page (PiUI's
+   *  overlay behavior: the exposed chat is not interactive while the
+   *  sidebar page is showing). */
+  readonly #onDocClickCapture = (event: MouseEvent): void => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const frame = findFrame()
+    const mobile = this.#mql?.matches ?? false
+    if (frame === null || !mobile) return
+    const chatLeft = chatPageLeft(frame)
+    if (chatLeft <= 0) return
+    if (frame.scrollLeft >= chatLeft / 2) return // already on the chat page
+    const chatCard = frame.children[1]
+    if (chatCard instanceof Element && chatCard.contains(target)) {
+      this.#placeOnChat('smooth')
     }
   }
 
