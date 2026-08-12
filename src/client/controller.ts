@@ -16,15 +16,6 @@
  * state-synced; the settle handler only re-snaps a short-of-page stop.
  */
 
-/** Marker attribute for the chat-header-left sidebar button. */
-export const SIDEBAR_BTN_ATTR = 'data-dshm-sidebar-btn'
-
-/** Panel-left glyph of the chat-header sidebar button (PiUI's lucide panel-left). */
-export const SIDEBAR_BTN_ICON =
-  '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" '
-  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
-  + '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>'
-
 /** The narrow breakpoint the pager keys off (PiUI's 768px). */
 export const MOBILE_BREAKPOINT = '(max-width: 768px)'
 
@@ -88,7 +79,6 @@ export interface MobileControllerHandle {
 export class MobileController implements MobileControllerHandle {
   readonly #options: MobileControllerOptions
   #html: HTMLElement | null = null
-  #sidebarBtn: HTMLButtonElement | null = null
   #mql: MediaQueryList | null = null
   #frameObserver: MutationObserver | null = null
   #rootObserver: MutationObserver | null = null
@@ -125,8 +115,6 @@ export class MobileController implements MobileControllerHandle {
     html.dataset.dshMobile = ''
 
     this.#installViewportMeta()
-    this.#sidebarBtn = this.#makeSidebarBtn()
-    document.body.append(this.#sidebarBtn)
 
     this.#mql = window.matchMedia(MOBILE_BREAKPOINT)
     this.#mql.addEventListener('change', this.#onBreakpointChange)
@@ -185,8 +173,6 @@ export class MobileController implements MobileControllerHandle {
     this.#settleTimer = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
-    this.#sidebarBtn?.remove()
-    this.#sidebarBtn = null
     if (this.#viewportMeta !== null) {
       if (this.#viewportOriginal !== null) this.#viewportMeta.content = this.#viewportOriginal
       else this.#viewportMeta.remove()
@@ -215,34 +201,6 @@ export class MobileController implements MobileControllerHandle {
     meta.content = VIEWPORT_CONTENT
     document.head.append(meta)
     this.#viewportMeta = meta
-  }
-
-  /** The chat-header-left sidebar button (PiUI placement). It only flips the
-   *  pager between the sidebar page and the fullscreen chat — the frame
-   *  state is never touched, so the sidebar keeps its full rendering. */
-  #makeSidebarBtn(): HTMLButtonElement {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.dataset.dshmSidebarBtn = ''
-    btn.setAttribute('aria-label', this.#sidebarBtnLabel())
-    btn.innerHTML = SIDEBAR_BTN_ICON
-    btn.addEventListener('click', this.#onSidebarBtnClick)
-    return btn
-  }
-
-  #sidebarBtnLabel(): string {
-    return document.documentElement.lang === 'zh-CN' ? '打开侧边栏' : 'Open sidebar'
-  }
-
-  /** Flip the pager to the other page — pure scroll, no state change. */
-  readonly #onSidebarBtnClick = (): void => {
-    const frame = findFrame()
-    const mobile = this.#mql?.matches ?? false
-    if (frame === null || !mobile) return
-    const chatLeft = chatPageLeft(frame)
-    if (chatLeft <= 0) return
-    const onSidebar = frame.scrollLeft < chatLeft / 2
-    frame.scrollTo({ left: onSidebar ? chatLeft : 0, behavior: 'smooth' })
   }
 
   /** The always-open phone layout expands the docked sidebar once when the

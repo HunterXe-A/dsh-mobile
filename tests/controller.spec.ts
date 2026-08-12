@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** MobileController: always-open sidebar + pager flip/settle, chrome, keyboard inset, teardown. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MobileController, PAGE_ATTR, SIDEBAR_BTN_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
+import { MobileController, PAGE_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
 
 /** A MediaQueryList stub (jsdom has none) that records its change listener. */
 function stubMatchMedia(matches: boolean): { fire: (next: boolean) => void } {
@@ -71,7 +71,7 @@ afterEach(() => {
 })
 
 describe('MobileController mount/dispose', () => {
-  it('tags <html>, upgrades the viewport meta, and appends the sidebar button', () => {
+  it('tags <html> and upgrades the viewport meta', () => {
     stubMatchMedia(false)
     makeFrame()
     const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
@@ -80,10 +80,8 @@ describe('MobileController mount/dispose', () => {
     const meta = document.querySelector('meta[name="viewport"]')
     expect(meta?.getAttribute('content')).toContain('viewport-fit=cover')
     expect(meta?.getAttribute('content')).toContain('maximum-scale=1')
-    expect(document.querySelector(`[${SIDEBAR_BTN_ATTR}]`)).not.toBeNull()
     controller.dispose()
     expect(document.documentElement.hasAttribute('data-dsh-mobile')).toBe(false)
-    expect(document.querySelector(`[${SIDEBAR_BTN_ATTR}]`)).toBeNull()
   })
 
   it('restores the pre-existing viewport meta content on dispose', () => {
@@ -224,26 +222,6 @@ describe('MobileController pager settle (re-snap without state sync)', () => {
     await flushTimers(250)
     expect(toggle).toHaveBeenCalledTimes(1) // no new flip
     expect(frame.scrollLeft).toBe(300)
-  })
-})
-
-describe('MobileController sidebar button (flips pager, never the state)', () => {
-  it('flips to the fullscreen chat from the sidebar page and back, state untouched', () => {
-    stubMatchMedia(true)
-    const frame = makeFrame()
-    const toggle = vi.fn(() => { frame.removeAttribute('data-sidebar-collapsed') })
-    const controller = makeController({ toggleSidebar: toggle })
-    controller.mount()
-    // On the sidebar page (0): the button flips to the chat page.
-    const btn = document.querySelector<HTMLElement>(`[${SIDEBAR_BTN_ATTR}]`)!
-    btn.click()
-    expect(frame.scrollLeft).toBe(300)
-    expect(toggle).toHaveBeenCalledTimes(1) // only the mount-time expand
-    expect(controller.isSidebarOpen()).toBe(true) // state never collapsed
-    // From the chat page: the button flips back to the sidebar page.
-    btn.click()
-    expect(frame.scrollLeft).toBe(0)
-    expect(toggle).toHaveBeenCalledTimes(1)
   })
 })
 

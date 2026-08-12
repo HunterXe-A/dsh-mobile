@@ -57,47 +57,6 @@
   }
 }
 
-/* ---------- plugin-owned chrome (controller DOM) ---------- */
-
-/* The chat-header-left sidebar button (PiUI placement): a flat icon button
-   riding inside the session header's title row — shown only while a
-   session header exists (the hero has no title to sit next to). Flips the
-   pager between the sidebar page and the fullscreen chat; the sidebar
-   state is never touched, so its content stays rendered. */
-[data-dsh-mobile] [data-dshm-sidebar-btn] {
-  position: fixed;
-  top: calc(6px + var(--dshm-safe-top));
-  left: calc(8px + var(--dshm-safe-left));
-  z-index: 45;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-[data-dsh-mobile] [data-dshm-sidebar-btn]:active {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-@media (max-width: 768px) {
-  [data-dsh-mobile] body:has([data-phase='active']) [data-dshm-sidebar-btn] {
-    display: inline-flex;
-  }
-}
-
-@media (min-width: 769px) {
-  [data-dsh-mobile] [data-dshm-sidebar-btn] {
-    display: none;
-  }
-}
-
 /* ---------- mobile pager (narrow viewports) ---------- */
 
 @media (max-width: 768px) {
@@ -174,10 +133,9 @@
     display: none !important;
   }
 
-  /* Session header: compact with a safe-area top, and left padding that
-     clears the fixed sidebar button (PiUI header-left placement). */
+  /* Session header: compact with a safe-area top. */
   [data-dsh-mobile] [data-phase='active'] > header {
-    padding: calc(6px + var(--dshm-safe-top)) 8px 0 calc(48px + var(--dshm-safe-left));
+    padding: calc(6px + var(--dshm-safe-top)) 8px 0 8px;
   }
 
   /* Conversation column: snugger side clearance for the composer card. */
