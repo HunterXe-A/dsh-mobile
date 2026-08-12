@@ -224,7 +224,8 @@ export class MobileController implements MobileControllerHandle {
 
   /** Mirror the state-demanded page on <html> and, on mobile, scroll the
    *  frame to it. `behavior` distinguishes the state-driven flip (smooth)
-   *  from initial placement and reflow (auto). */
+   *  from initial placement and reflow (auto). Leaving the mobile breakpoint
+   *  clears the 3D flip vars so the desktop layout renders flat. */
   readonly #syncPage = (behavior: ScrollBehavior): void => {
     const html = this.#html
     if (html === null) return
@@ -234,7 +235,13 @@ export class MobileController implements MobileControllerHandle {
       ? 'chat'
       : 'sidebar'
     html.setAttribute(PAGE_ATTR, page)
-    if (frame === null || !mobile) return
+    if (frame === null || !mobile) {
+      // Desktop: the stock layout owns the columns; drop any leftover flip.
+      for (const prop of ['--dshm-rotate', '--dshm-scale', '--dshm-offset-x', '--dshm-origin-x']) {
+        frame?.style.removeProperty(prop)
+      }
+      return
+    }
     const left = page === 'sidebar' ? 0 : chatPageLeft(frame)
     if (Math.abs(frame.scrollLeft - left) > 2) {
       frame.scrollTo({ left, behavior })

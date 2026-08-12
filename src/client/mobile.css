@@ -29,10 +29,11 @@
   --dshm-safe-left: env(safe-area-inset-left, 0px);
   /* Virtual-keyboard inset, driven by the controller (visualViewport). */
   --dshm-keyboard-inset: 0px;
-  /* Sidebar page width: PiUI's half-open card — about half the viewport
-     (capped at the 360px PiUI uses), so the chat card stays visible beside
-     it after swiping to the sidebar. */
-  --dshm-sidebar-width: min(360px, 50vw);
+  /* Sidebar page width: at least the sidebar's own 280px content width (so
+     it is never clipped), at most 360px, with ~70vw on phones — the chat
+     card then shows only a sliver on the right (PiUI's overlayWidth idea,
+     tightened so the chat does not dominate). */
+  --dshm-sidebar-width: clamp(280px, 70vw, 360px);
   /* PiUI-style 3D flip of the chat card, driven by the controller on scroll. */
   --dshm-rotate: 0deg;
   --dshm-scale: 1;
