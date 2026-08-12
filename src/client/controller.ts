@@ -1,19 +1,19 @@
 /**
  * DOM-side mobile controller: the non-React half of the plugin. Owns the
- * pieces the frame itself cannot express — the viewport meta upgrade, the
- * safe-area/keyboard CSS variables, the pager page mirror, and the plugin's
- * own chrome (the fixed top-left sidebar button). Everything it installs is
- * removed by dispose(), and every rule it depends on is scoped under the
+ * pieces the frame itself cannot express — the viewport meta upgrade and
+ * the safe-area/keyboard CSS variables. Everything it installs is removed by
+ * dispose(), and every rule it depends on is scoped under the
  * [data-dsh-mobile] attribute it sets on <html>.
  *
- * Mobile layout follows PiUI's chat pager with the sidebar left OPEN: the
- * STOCK AppFrame becomes a horizontal scroll-snap pager whose columns are
- * two cards — a half-open sidebar page and a full-width chat page that stays
- * visible beside it. The controller expands the auto-collapsed sidebar once
- * below the breakpoint (AppFrame collapses it to the rail on narrow
- * viewports), mirrors the frame's state as the current page, flips the pager
- * when the state changes, and — like PiUI — re-snaps and reconciles state
- * after a manual swipe settles.
+ * Mobile layout follows PiUI's chat pager: the STOCK AppFrame becomes a
+ * horizontal scroll-snap pager whose columns are two pages — a half-open
+ * sidebar page and a full-width chat page that stays visible beside it.
+ * The controller's only frame interaction is to expand the auto-collapsed
+ * sidebar ONCE below the breakpoint (AppFrame collapses it to the rail on
+ * narrow viewports) and leave it there: the sidebar column then keeps its
+ * full content rendered at all times, so swiping to it never triggers a
+ * late render — the pager is a pure visual scroll. Manual swipes are never
+ * state-synced; the settle handler only re-snaps a short-of-page stop.
  */
 
 /** The narrow breakpoint the pager keys off (PiUI's 768px). */
@@ -22,13 +22,10 @@ export const MOBILE_BREAKPOINT = '(max-width: 768px)'
 /** The <html> attribute that mirrors the pager page the state demands. */
 export const PAGE_ATTR = 'data-dshm-page'
 
-/** Marker attribute for the plugin-owned sidebar button. */
-export const FAB_ATTR = 'data-dshm-fab-menu'
-
 /** Pager page names (the mirror values of PAGE_ATTR). */
 export type MobilePage = 'sidebar' | 'chat'
 
-/** Wait after the last scroll event before the pager settles (PiUI uses the same idea). */
+/** Wait after the last scroll event before the pager settles. */
 const SCROLL_SETTLE_MS = 200
 
 /**
@@ -45,11 +42,6 @@ const VIEWPORT_CONTENT =
  * width), so the union always selects the frame and never a descendant.
  */
 const FRAME_SELECTOR = '#root > div[data-sidebar-collapsed], #root > div[data-details-collapsed]'
-
-/** Hamburger glyph of the sidebar button. */
-export const MENU_ICON =
-  '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">'
-  + '<path d="M2 4.25h12M2 8h12M2 11.75h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>'
 
 /** The AppFrame element, or null before the layout entry mounts it. */
 function findFrame(): HTMLElement | null {
@@ -87,7 +79,6 @@ export interface MobileControllerHandle {
 export class MobileController implements MobileControllerHandle {
   readonly #options: MobileControllerOptions
   #html: HTMLElement | null = null
-  #fab: HTMLButtonElement | null = null
   #mql: MediaQueryList | null = null
   #frameObserver: MutationObserver | null = null
   #rootObserver: MutationObserver | null = null
@@ -124,8 +115,6 @@ export class MobileController implements MobileControllerHandle {
     html.dataset.dshMobile = ''
 
     this.#installViewportMeta()
-    this.#fab = this.#makeFab()
-    document.body.append(this.#fab)
 
     this.#mql = window.matchMedia(MOBILE_BREAKPOINT)
     this.#mql.addEventListener('change', this.#onBreakpointChange)
@@ -154,15 +143,10 @@ export class MobileController implements MobileControllerHandle {
     // the case where the frame's narrow flag settles after first paint.
     this.#ensureSidebarOpen()
     this.#syncPage('auto')
-    this.#updateAria()
-    // Layout and the frame's narrow flag settle after first paint: expand
-    // the sidebar and re-sync the page then, in case the first pass raced
-    // them. The handle is kept so dispose() can cancel it.
     this.#mountFrame = requestAnimationFrame(() => {
       this.#mountFrame = null
       this.#ensureSidebarOpen()
       this.#syncPage('auto')
-      this.#updateAria()
     })
   }
 
@@ -188,14 +172,7 @@ export class MobileController implements MobileControllerHandle {
     this.#resizeTimer = null
     this.#settleTimer = null
     const frame = findFrame()
-    if (frame !== null) {
-      frame.removeEventListener('scroll', this.#onPagerScroll)
-      for (const prop of ['--dshm-rotate', '--dshm-scale', '--dshm-offset-x', '--dshm-origin-x']) {
-        frame.style.removeProperty(prop)
-      }
-    }
-    this.#fab?.remove()
-    this.#fab = null
+    if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
     if (this.#viewportMeta !== null) {
       if (this.#viewportOriginal !== null) this.#viewportMeta.content = this.#viewportOriginal
       else this.#viewportMeta.remove()
@@ -226,27 +203,12 @@ export class MobileController implements MobileControllerHandle {
     this.#viewportMeta = meta
   }
 
-  #makeFab(): HTMLButtonElement {
-    const fab = document.createElement('button')
-    fab.type = 'button'
-    fab.dataset.dshmFabMenu = ''
-    fab.setAttribute('aria-label', this.#fabLabel())
-    fab.setAttribute('aria-expanded', 'false')
-    fab.innerHTML = MENU_ICON
-    fab.addEventListener('click', this.#options.toggleSidebar)
-    return fab
-  }
-
-  #fabLabel(): string {
-    return document.documentElement.lang === 'zh-CN' ? '打开侧边栏' : 'Open sidebar'
-  }
-
   /** The always-open phone layout expands the docked sidebar once when the
    *  viewport crosses into the mobile breakpoint (AppFrame auto-collapses
-   *  it to the rail there). A later manual collapse is left alone. The
-   *  request is idempotent: repeated calls while one expand is still
-   *  in flight (mount sync pass, rAF pass, late frame) do not re-toggle.
-   *  Seeing the frame actually expanded clears the pending request. */
+   *  it to the rail there). The request is idempotent: repeated calls while
+   *  one expand is still in flight (mount sync pass, rAF pass, late frame)
+   *  do not re-toggle. Seeing the frame actually expanded clears the pending
+   *  request. A later manual collapse is left alone. */
   readonly #ensureSidebarOpen = (): void => {
     if (!(this.#mql?.matches ?? false)) return
     const frame = findFrame()
@@ -272,7 +234,6 @@ export class MobileController implements MobileControllerHandle {
       ? 'chat'
       : 'sidebar'
     html.setAttribute(PAGE_ATTR, page)
-    this.#fab?.setAttribute('aria-expanded', String(page === 'sidebar'))
     if (frame === null || !mobile) return
     const left = page === 'sidebar' ? 0 : chatPageLeft(frame)
     if (Math.abs(frame.scrollLeft - left) > 2) {
@@ -285,7 +246,6 @@ export class MobileController implements MobileControllerHandle {
   readonly #onFrameCollapseChange = (): void => {
     if (!findFrame()?.hasAttribute('data-sidebar-collapsed')) this.#expandPending = false
     this.#syncPage('smooth')
-    this.#updateAria()
   }
 
   readonly #ensureFrameObserver = (): void => {
@@ -297,14 +257,12 @@ export class MobileController implements MobileControllerHandle {
       attributes: true,
       attributeFilter: ['data-sidebar-collapsed'],
     })
-    // Live pager driving (3D flip + settle re-snap) rides the frame's own
-    // scroll.
+    // Live pager settle re-snap rides the frame's own scroll.
     frame.addEventListener('scroll', this.#onPagerScroll, { passive: true })
     // A frame that appears after mount (the layout entry loads later) still
     // gets the always-open treatment.
     this.#ensureSidebarOpen()
     this.#syncPage('auto')
-    this.#updateAria()
   }
 
   /** Crossing the breakpoint: entering mobile re-expands the sidebar (the
@@ -313,7 +271,6 @@ export class MobileController implements MobileControllerHandle {
   readonly #onBreakpointChange = (): void => {
     this.#ensureSidebarOpen()
     this.#syncPage('auto')
-    this.#updateAria()
   }
 
   /** Width reflow within one breakpoint side: reposition the active page. */
@@ -322,30 +279,15 @@ export class MobileController implements MobileControllerHandle {
     this.#resizeTimer = window.setTimeout(() => {
       this.#resizeTimer = null
       this.#syncPage('auto')
-      this.#updateAria()
     }, 120)
   }
 
-  /** Live pager driver: PiUI's 3D flip vars follow the scroll, and once the
-   *  scroll settles the pager re-snaps to the nearest whole page — flipping
-   *  the frame state when the user's swipe crossed the midpoint, or nudging
-   *  the scroll when it stopped just short of one. */
+  /** Once the scroll settles, nudge a stop just short of a page to the
+   *  whole page. The state is deliberately NOT synced here: the sidebar
+   *  stays expanded (always rendered), so a swipe across the midpoint
+   *  merely parks the pager on the other page — the sidebar column never
+   *  re-renders. */
   readonly #onPagerScroll = (): void => {
-    const frame = findFrame()
-    const mobile = this.#mql?.matches ?? false
-    if (frame === null || !mobile) return
-    const chatLeft = chatPageLeft(frame)
-    if (chatLeft <= 0) return
-    const left = frame.scrollLeft
-    // -1 (sidebar page) … 0 (chat page), PiUI's progress.
-    const progress = Math.max(-1, Math.min(1, (left - chatLeft) / chatLeft))
-    const abs = Math.abs(progress)
-    const right = Math.max(0, progress)
-    frame.style.setProperty('--dshm-rotate', `${progress * 10}deg`)
-    frame.style.setProperty('--dshm-scale', `${1 - abs * 0.06}`)
-    frame.style.setProperty('--dshm-offset-x', `${right * right * -48}px`)
-    frame.style.setProperty('--dshm-origin-x', `${50 - progress * 50}%`)
-
     if (this.#settleTimer !== null) window.clearTimeout(this.#settleTimer)
     this.#settleTimer = window.setTimeout(() => {
       this.#settleTimer = null
@@ -362,20 +304,9 @@ export class MobileController implements MobileControllerHandle {
     const left = frame.scrollLeft
     const nearest: MobilePage = left < chatLeft / 2 ? 'sidebar' : 'chat'
     const target = nearest === 'sidebar' ? 0 : chatLeft
-    const statePage: MobilePage = frame.hasAttribute('data-sidebar-collapsed') ? 'chat' : 'sidebar'
-    if (nearest !== statePage) {
-      // A swipe that crossed the midpoint flips the state (the observer
-      // then animates to the target).
-      this.#options.toggleSidebar()
-    } else if (Math.abs(left - target) > 4) {
-      // A stop just short of a page: nudge it to the whole page.
+    if (Math.abs(left - target) > 4) {
       frame.scrollTo({ left: target, behavior: 'smooth' })
     }
-  }
-
-  /** Mirror the sidebar open state on the button's aria-expanded. */
-  readonly #updateAria = (): void => {
-    this.#fab?.setAttribute('aria-expanded', String(this.isSidebarOpen()))
   }
 
   readonly #requestKeyboard = (): void => {

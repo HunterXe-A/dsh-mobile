@@ -56,41 +56,6 @@
   }
 }
 
-/* ---------- plugin-owned chrome (controller DOM) ---------- */
-
-/* The fixed top-left sidebar button (PiUI's header-left placement): toggles
-   the sidebar page. Flat in the active session header (which clears it via
-   left padding), a small floating card over the no-session hero. */
-[data-dsh-mobile] [data-dshm-fab-menu] {
-  position: fixed;
-  top: calc(8px + var(--dshm-safe-top));
-  left: calc(8px + var(--dshm-safe-left));
-  z-index: 45;
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
-  background: var(--dsw-alias-button-floating-fill);
-  box-shadow: 0 2px 12px color-mix(in srgb, var(--dsw-static-neutral-1000) 12%, transparent);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-[data-dsh-mobile] [data-dshm-fab-menu]:active {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-@media (min-width: 769px) {
-  [data-dsh-mobile] [data-dshm-fab-menu] {
-    display: none;
-  }
-}
-
 /* ---------- mobile pager (narrow viewports) ---------- */
 
 @media (max-width: 768px) {
@@ -125,20 +90,25 @@
     scroll-snap-stop: always;
   }
 
-  /* Both pages render as cards: rounded, shadowed, clipped to the radius,
-     sharing the chat background. The chat card carries PiUI's 3D flip
-     (rotateY/scale vars driven by the controller on scroll). */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(-n+2),
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(-n+2) {
+  /* Sidebar page: a plain page sharing the chat background — flat, no card
+     treatment — with safe-area top so its controls clear the notch. The
+     chat card's radius and shadow are what separate the two (PiUI). */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
+    background: var(--dsw-alias-bg-base);
+    padding-top: var(--dshm-safe-top);
+  }
+
+  /* Chat page: the PiUI rounded card — rounded, shadowed, clipped to the
+     radius — with the 3D flip (rotateY/scale vars driven by the controller
+     on scroll). The conversation renders completely untouched inside. */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(2),
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(2) {
     border: 1px solid var(--dsw-alias-border-l2);
     border-radius: 16px;
     overflow: hidden;
     background: var(--dsw-alias-bg-base);
     box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
-  }
-
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(2),
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(2) {
     transform: translate3d(var(--dshm-offset-x, 0px), 0, 0)
       rotateY(var(--dshm-rotate, 0deg))
       scale(var(--dshm-scale, 1));
@@ -148,22 +118,15 @@
     will-change: transform;
   }
 
-  /* Sidebar card clears the notch; the chat card's header handles its own
-     top via the safe-area header padding. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
-    padding-top: var(--dshm-safe-top);
-  }
-
   /* Drag handles are desktop-only affordances. */
   [data-dsh-mobile] [data-side] {
     display: none !important;
   }
 
-  /* Session header: compact with a safe-area top, and left padding that
-     clears the fixed sidebar button. */
+  /* Session header: compact with a safe-area top (no menu button to clear —
+     the sidebar is always open). */
   [data-dsh-mobile] [data-phase='active'] > header {
-    padding: calc(6px + var(--dshm-safe-top)) 8px 0 calc(48px + var(--dshm-safe-left));
+    padding: calc(6px + var(--dshm-safe-top)) 8px 0 8px;
   }
 
   /* Conversation column: snugger side clearance for the composer card. */

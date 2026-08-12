@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** MobileController: always-open sidebar + pager flip/settle, chrome, keyboard inset, teardown. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FAB_ATTR, MobileController, PAGE_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
+import { MobileController, PAGE_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
 
 /** A MediaQueryList stub (jsdom has none) that records its change listener. */
 function stubMatchMedia(matches: boolean): { fire: (next: boolean) => void } {
@@ -71,7 +71,7 @@ afterEach(() => {
 })
 
 describe('MobileController mount/dispose', () => {
-  it('tags <html>, upgrades the viewport meta, and appends the sidebar button', () => {
+  it('tags <html> and upgrades the viewport meta', () => {
     stubMatchMedia(false)
     makeFrame()
     const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
@@ -80,10 +80,8 @@ describe('MobileController mount/dispose', () => {
     const meta = document.querySelector('meta[name="viewport"]')
     expect(meta?.getAttribute('content')).toContain('viewport-fit=cover')
     expect(meta?.getAttribute('content')).toContain('maximum-scale=1')
-    expect(document.querySelector(`[${FAB_ATTR}]`)).not.toBeNull()
     controller.dispose()
     expect(document.documentElement.hasAttribute('data-dsh-mobile')).toBe(false)
-    expect(document.querySelector(`[${FAB_ATTR}]`)).toBeNull()
   })
 
   it('restores the pre-existing viewport meta content on dispose', () => {
@@ -178,7 +176,7 @@ describe('MobileController always-open sidebar + pager', () => {
   })
 })
 
-describe('MobileController pager settle (PiUI re-snap)', () => {
+describe('MobileController pager settle (re-snap without state sync)', () => {
   /** Mount with a synchronous rAF so the mount-time re-sync cannot race the
    *  manual scrollLeft the tests set afterwards. */
   function mountSync(frame: HTMLElement, toggle: ReturnType<typeof toggleSidebarSpy>) {
@@ -188,11 +186,9 @@ describe('MobileController pager settle (PiUI re-snap)', () => {
     return controller
   }
 
-  it('flips the frame state when a swipe settles past the midpoint', async () => {
+  it('parks on the chat page after a past-midpoint swipe WITHOUT syncing state', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
-    // The real toggle flips the frame's collapsed attribute (AppFrame
-    // re-renders from the layout store); the spy simulates that reaction.
     const toggle = vi.fn(() => { frame.removeAttribute('data-sidebar-collapsed') })
     mountSync(frame, toggle)
     expect(toggle).toHaveBeenCalledTimes(1) // the mount-time always-open expand
@@ -200,11 +196,18 @@ describe('MobileController pager settle (PiUI re-snap)', () => {
     // drives the scroll (it would otherwise reset scrollLeft to page 0).
     await new Promise(resolve => setTimeout(resolve, 0))
     // Swipe from the sidebar page (0) toward the chat, stopping past the
-    // midpoint: the settle flips the state (2) — AppFrame collapses.
+    // midpoint: the settle re-snaps to the chat page, but the state stays
+    // expanded — the sidebar column keeps its full rendering (PiUI).
     frame.scrollLeft = 200 // chatLeft 300, midpoint 150
     frame.dispatchEvent(new Event('scroll'))
     await flushTimers(250)
-    expect(toggle).toHaveBeenCalledTimes(2)
+    expect(frame.scrollLeft).toBe(300)
+    expect(toggle).toHaveBeenCalledTimes(1) // no state flip from the swipe
+    expect(document.documentElement.getAttribute(PAGE_ATTR)).toBe('sidebar')
+    expect(controllerIsOpen()).toBe(true)
+    function controllerIsOpen(): boolean {
+      return !frame.hasAttribute('data-sidebar-collapsed')
+    }
   })
 
   it('nudges a stop just short of a page back to the whole page', async () => {
@@ -213,12 +216,8 @@ describe('MobileController pager settle (PiUI re-snap)', () => {
     const toggle = toggleSidebarSpy()
     mountSync(frame, toggle)
     expect(toggle).toHaveBeenCalledTimes(1) // the mount-time always-open expand
-    // The user collapsed the sidebar back to the rail (chat page state).
-    frame.setAttribute('data-sidebar-collapsed', '')
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(frame.scrollLeft).toBe(300)
-    // Stops just short of the chat page: no state flip, the scroll nudges.
-    frame.scrollLeft = 290 // nearest chat, state chat (collapsed)
+    // Stops just short of the chat page: the settle nudges the scroll.
+    frame.scrollLeft = 290 // chatLeft 300, nearest chat
     frame.dispatchEvent(new Event('scroll'))
     await flushTimers(250)
     expect(toggle).toHaveBeenCalledTimes(1) // no new flip

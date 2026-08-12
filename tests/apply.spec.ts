@@ -54,7 +54,6 @@ describe('dsh-mobile apply', () => {
     const b = await bench()
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     expect(document.documentElement.dataset.dshMobile).toBe('')
-    expect(document.querySelector('[data-dshm-fab-menu]')).not.toBeNull()
   })
 
   it('expands the collapsed sidebar when mobile', async () => {
