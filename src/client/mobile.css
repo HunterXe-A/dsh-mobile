@@ -128,6 +128,16 @@
     will-change: transform;
   }
 
+  /* The session list's bottom scroll fade (ui-workspace .fade, a 72px
+     transparent→fill overlay pinned to the list bottom) is a desktop
+     affordance; on the always-open phone sidebar it just dims the tail of
+     the list. Selected structurally (the tree body's span child, next to
+     the role=tree list), never by hashed class name. */
+  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child div:has(> [role='tree']) > span,
+  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child div:has(> [role='tree']) > span {
+    display: none;
+  }
+
   /* Drag handles are desktop-only affordances. */
   [data-dsh-mobile] [data-side] {
     display: none !important;
