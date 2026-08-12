@@ -1,15 +1,14 @@
 /**
  * Browser half of the dsh-mobile plugin: mounts the DOM-side mobile
  * controller (viewport meta, safe-area/keyboard insets, pager page mirror,
- * hero FAB) and contributes the phone-only sidebar menu button to the
- * session header's actions row. The global mobile sheet (mobile.css) is
+ * fixed top-left sidebar button). The global mobile sheet (mobile.css) is
  * injected with this bundle as a <style data-plugin> tag and removed on
  * unload — the stock GUI stays byte-identical without the plugin row.
  *
  * Mobile layout follows PiUI's chat pager: the stock three-column frame
- * becomes a horizontal scroll-snap pager (sidebar | chat | details), the
- * chat column renders completely untouched, and the menu button / FAB flip
- * the pager to the sidebar page through the frame's own layout action.
+ * becomes a horizontal scroll-snap pager (sidebar | chat), the chat column
+ * renders completely untouched, and the fixed top-left button flips the
+ * pager through the frame's own layout action.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the layout plugin's Context merge (ctx.layout) and the
@@ -17,37 +16,20 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-runtime/client'
 import { MobileController } from './controller.ts'
-import { MobileMenuButton } from './MobileMenuButton.tsx'
-import type { MobileMenuInjected } from './MobileMenuButton.tsx'
-import { en, zh, type MobileKey } from './locales.ts'
 // Plugin-owned global mobile sheet (injected as a <style data-plugin> tag).
 import './mobile.css'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface LocaleNamespaceMap {
-    /** Mobile chrome copy. */
-    mobile: MobileKey
-  }
-}
-
-/** Dictionary namespace owned by this plugin (mobile chrome copy). */
-const NS = 'mobile'
-
 /** Services required by the mobile plugin. */
-export const inject = ['slots', 'layout', 'sessions']
+export const inject = ['layout', 'sessions']
 
 /**
- * Install the mobile surfaces: the DOM controller (one effect) and the
- * header menu button (waits on the ui-conversation declaration via
- * slots.inject — absent this plugin the header keeps its stock actions).
+ * Install the mobile surfaces: the DOM controller (one effect). A
+ * current-session change (a session picked from the sidebar page, or a new
+ * session started) flips back to the chat page — list updates that do not
+ * move `current` (running flags, titles) leave it alone.
  * @param ctx - Client root context.
  */
 export function apply(ctx: ClientContext): void {
-  // DOM controller: viewport meta, safe-area/keyboard insets, pager page
-  // mirror, hero FAB. A current-session change (a session picked from the
-  // sidebar page, or a new session started) flips back to the chat page —
-  // list updates that do not move `current` (running flags, titles) leave
-  // it alone.
   ctx.effect(() => {
     const controller = new MobileController({
       toggleSidebar: () => ctx.layout.toggleSidebar(),
@@ -65,23 +47,4 @@ export function apply(ctx: ClientContext): void {
       controller.dispose()
     }
   }, 'dsh-mobile: DOM controller')
-
-  // The phone-only pager menu button, in the header's leading static band.
-  ctx.effect(
-    () => ctx.slots.inject('conversation.session.header.actions' as never, () => ctx.slots.register(
-      // The target slot is declared by ui-conversation, whose types this
-      // package must not import (one-way dependency). The erased call keeps
-      // the registration correct at runtime — the loader resolves the real
-      // spec.
-      {
-        name: 'conversation.session.header.actions',
-        id: 'dsh-mobile-menu',
-        order: -10,
-        locale: NS,
-        inject: (): MobileMenuInjected => ({ toggleSidebar: () => ctx.layout.toggleSidebar() }),
-      } as never,
-      MobileMenuButton as never,
-    )),
-    'dsh-mobile: header menu button',
-  )
 }

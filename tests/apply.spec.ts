@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** dsh-mobile registration: controller effect + header menu entry; waits for its owner. */
+/** dsh-mobile registration: controller effect; closes to chat on session change. */
 import { Context } from 'cordis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
@@ -46,7 +46,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function bench(declare = true, list?: ListCapture, layout?: unknown) {
+async function bench(list?: ListCapture, layout?: unknown) {
   const ctx = new Context()
   await ctx.plugin(SlotsService).await()
   ctx.provide('locale', new LocaleService(ctx))
@@ -61,46 +61,19 @@ async function bench(declare = true, list?: ListCapture, layout?: unknown) {
       subscribe: () => () => {},
     },
   })
-  const slots = ctx.get('slots') as SlotsService
-  if (declare) {
-    slots.register(
-      {
-        name: 'root',
-        children: {
-          'conversation.session.header.actions': { kind: 'list', scope: 'session' },
-        },
-      } as never,
-      () => null,
-    )
-  }
-  return { ctx, slots }
+  return { ctx }
 }
 
 describe('dsh-mobile apply', () => {
   it('declares only the services it uses', () => {
-    expect(inject).toEqual(['slots', 'layout', 'sessions'])
+    expect(inject).toEqual(['layout', 'sessions'])
   })
 
-  it('mounts the controller and registers the header menu entry once declared', async () => {
+  it('mounts the controller and tags <html>', async () => {
     const b = await bench()
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     expect(document.documentElement.dataset.dshMobile).toBe('')
-    const entries = b.slots.entries('conversation.session.header.actions' as never)
-    expect(entries).toHaveLength(1)
-    expect(entries[0]!.options.id).toBe('dsh-mobile-menu')
-    expect(entries[0]!.options.order).toBe(-10)
-    expect(entries[0]!.locale).toBe('mobile')
-    // The drawer trigger flips through the frame's layout action.
-    const injected = entries[0]!.inject!() as { toggleSidebar: () => void }
-    expect(injected.toggleSidebar).toBeTypeOf('function')
-  })
-
-  it('waits for the owner — no registration without a live declaration', async () => {
-    const b = await bench(false)
-    await b.ctx.plugin({ inject: [...inject], apply }).await()
-    expect(b.slots.entries('conversation.session.header.actions' as never)).toHaveLength(0)
-    // The controller still mounts (it does not depend on the declaration).
-    expect(document.documentElement.dataset.dshMobile).toBe('')
+    expect(document.querySelector('[data-dshm-fab-menu]')).not.toBeNull()
   })
 
   it('returns to the chat page when the current session changes', async () => {
@@ -114,7 +87,7 @@ describe('dsh-mobile apply', () => {
     // re-render would, so the pager visibly returns to the chat page.
     let frame: HTMLElement | null = null
     const toggle = vi.fn(() => { frame?.setAttribute('data-sidebar-collapsed', '') })
-    const b = await bench(true, list, {
+    const b = await bench(list, {
       toggleSidebar: toggle,
       openDetails: vi.fn(),
       closeDetails: vi.fn(),

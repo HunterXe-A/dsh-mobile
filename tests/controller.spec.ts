@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** MobileController: pager page mirror, viewport meta, FAB, keyboard inset, teardown. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FAB_ATTR, MobileController, PAGE_ATTR } from '../src/client/controller.ts'
+import { FAB_ATTR, MobileController, PAGE_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
 
 /** A MediaQueryList stub that records its change listener for manual firing. */
 function stubMatchMedia(matches: boolean): { mql: MediaQueryList; fire: (next: boolean) => void } {
@@ -51,12 +51,22 @@ function makeFrame(): HTMLElement {
 
 function toggleSidebarSpy() { return vi.fn() }
 
+/** Track every mounted controller so afterEach can dispose it — pending
+ *  settle/resize timers from one test must not fire into the next. */
+const liveControllers: MobileController[] = []
+function makeController(options: MobileControllerOptions): MobileController {
+  const controller = new MobileController(options)
+  liveControllers.push(controller)
+  return controller
+}
+
 /** Let jsdom deliver pending MutationObserver callbacks (macrotask checkpoint). */
 async function flushObservers(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 
 afterEach(() => {
+  for (const controller of liveControllers.splice(0)) controller.dispose()
   document.body.innerHTML = ''
   document.head.innerHTML = ''
   vi.unstubAllGlobals()
@@ -67,7 +77,7 @@ describe('MobileController mount/dispose', () => {
   it('tags <html>, upgrades the viewport meta, and appends the FAB (no backdrop)', () => {
     stubMatchMedia(false)
     makeFrame()
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     expect(document.documentElement.dataset.dshMobile).toBe('')
     const meta = document.querySelector('meta[name="viewport"]')
@@ -86,7 +96,7 @@ describe('MobileController mount/dispose', () => {
     meta.name = 'viewport'
     meta.content = 'width=device-width, initial-scale=1'
     document.head.append(meta)
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     expect(meta.content).toContain('maximum-scale=1')
     controller.dispose()
@@ -98,7 +108,7 @@ describe('MobileController pager', () => {
   it('places the pager on the chat page at mount (collapsed sidebar = chat page)', () => {
     stubMatchMedia(true)
     const frame = makeFrame()
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     expect(controller.isSidebarOpen()).toBe(false)
     expect(frame.scrollLeft).toBe(300) // the sidebar page width = chat snap point
@@ -108,7 +118,7 @@ describe('MobileController pager', () => {
   it('flips to the sidebar page when the frame expands, and back when it collapses', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     expect(frame.scrollLeft).toBe(300)
     // AppFrame drops data-sidebar-collapsed when the sidebar expands on a
@@ -127,7 +137,7 @@ describe('MobileController pager', () => {
   it('stays on the chat page on wide viewports even when the frame is expanded', async () => {
     stubMatchMedia(false)
     const frame = makeFrame()
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     frame.removeAttribute('data-sidebar-collapsed')
     await flushObservers()
@@ -140,7 +150,7 @@ describe('MobileController pager', () => {
     const root = document.createElement('div')
     root.id = 'root'
     document.body.append(root)
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     const frame = document.createElement('div')
     frame.setAttribute('data-sidebar-collapsed', '')
@@ -158,7 +168,7 @@ describe('MobileController pager', () => {
   it('repositions the active page after a width reflow', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     expect(frame.scrollLeft).toBe(300)
     // The sidebar page narrows (viewport change): the chat snap point moves.
@@ -170,12 +180,62 @@ describe('MobileController pager', () => {
   })
 })
 
+describe('MobileController pager settle (PiUI re-snap)', () => {
+  /** Mount with a synchronous rAF so the mount-time initial sync cannot race
+   *  the manual scrollLeft the tests set afterwards. */
+  function mountSync(frame: HTMLElement, toggle: ReturnType<typeof toggleSidebarSpy>) {
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 0 })
+    const controller = makeController({ toggleSidebar: toggle })
+    controller.mount()
+    return controller
+  }
+
+  it('drives the 3D flip vars from the scroll position', () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    frame.scrollLeft = 0 // sidebar page: progress -1
+    frame.dispatchEvent(new Event('scroll'))
+    expect(frame.style.getPropertyValue('--dshm-rotate')).toBe('-8deg')
+    frame.scrollLeft = 300 // chat page: progress 0
+    frame.dispatchEvent(new Event('scroll'))
+    expect(frame.style.getPropertyValue('--dshm-rotate')).toBe('0deg')
+  })
+
+  it('flips the frame state when a swipe settles past the midpoint', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const toggle = toggleSidebarSpy()
+    mountSync(frame, toggle)
+    // Swipe from chat (300) toward the sidebar, stopping past the midpoint:
+    // the settle flips the state (the frame observer then animates to 0).
+    frame.scrollLeft = 100
+    frame.dispatchEvent(new Event('scroll'))
+    await new Promise(resolve => setTimeout(resolve, 250))
+    expect(toggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('nudges a stop just short of a page back to the whole page', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const toggle = toggleSidebarSpy()
+    mountSync(frame, toggle)
+    // Stops just short of the chat page: no state flip, the scroll nudges.
+    frame.scrollLeft = 290 // chatLeft 300, nearest page chat, state chat
+    frame.dispatchEvent(new Event('scroll'))
+    await new Promise(resolve => setTimeout(resolve, 250))
+    expect(toggle).not.toHaveBeenCalled()
+    expect(frame.scrollLeft).toBe(300)
+  })
+})
+
 describe('MobileController returnToChat', () => {
   it('toggles back to the chat page when the sidebar was opened through the menu', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
     const toggle = toggleSidebarSpy()
-    const controller = new MobileController({ toggleSidebar: toggle })
+    const controller = makeController({ toggleSidebar: toggle })
     controller.mount()
     // On the chat page: no toggle.
     controller.returnToChat()
@@ -192,7 +252,7 @@ describe('MobileController returnToChat', () => {
     stubMatchMedia(true)
     const frame = makeFrame()
     const toggle = toggleSidebarSpy()
-    const controller = new MobileController({ toggleSidebar: toggle })
+    const controller = makeController({ toggleSidebar: toggle })
     controller.mount()
     // Manual swipe: scrollLeft moves to the sidebar page, the frame stays
     // collapsed (the state mirror still says chat).
@@ -221,7 +281,7 @@ describe('MobileController keyboard inset', () => {
         removeEventListener: vi.fn(),
       },
     })
-    const controller = new MobileController({ toggleSidebar: toggleSidebarSpy() })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
     // Keyboard opens: the visual viewport shrinks below the layout viewport.
@@ -231,3 +291,4 @@ describe('MobileController keyboard inset', () => {
     controller.dispose()
   })
 })
+
