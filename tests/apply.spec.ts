@@ -3,8 +3,8 @@
 import { Context } from 'cordis'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
-import { SlotsService } from '@deepseek-ai/dsh-client-runtime/client'
-import { LocaleService } from '@deepseek-ai/dsh-client-locale/client'
+import { SlotRegistry } from '@deepseek-ai/dsh-client-runtime/client'
+import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { apply, inject } from '../src/client/index.ts'
 
 /** A MediaQueryList stub (jsdom has none) with a controllable fire(). */
@@ -47,8 +47,8 @@ afterEach(() => {
 
 async function bench(layout?: unknown, list?: ListCapture) {
   const ctx = new Context()
-  await ctx.plugin(SlotsService).await()
-  ctx.provide('locale', new LocaleService(ctx))
+  await ctx.plugin(SlotRegistry).await()
+  ctx.provide('locale', new LocaleRuntime(ctx))
   ctx.provide('layout', layout ?? {
     toggleSidebar: vi.fn(),
     openDetails: vi.fn(),
