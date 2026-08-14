@@ -265,16 +265,17 @@
     width: 100%;
   }
 
-  /* Options area: bottom padding accounts for the home indicator. */
+  /* Options area: the stock 24px side padding is reduced to 16px on
+     mobile — the rows carry NO side padding of their own (their 16px is
+     vertical), so this single inset is the one symmetric margin: rows are
+     width:100% and the option text right-pads 48px for its selector, so a
+     leftover/stacked padding would read as "left has more whitespace,
+     right looks clipped". 16px both sides keeps rows breathing without
+     crowding the selectors. Bottom padding accounts for the home
+     indicator; the area scrolls. */
   [data-dsh-mobile] [role='dialog'] > div:last-child > div:last-child {
     padding: 0 16px calc(16px + var(--dshm-safe-bottom));
     overflow-y: auto;
-  }
-
-  /* Settings section rows breathe on the narrow column. */
-  [data-dsh-mobile] [role='dialog'] [data-slot='settings.section'] > * {
-    padding-left: 16px;
-    padding-right: 16px;
   }
 }
 
