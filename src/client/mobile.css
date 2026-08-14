@@ -181,6 +181,101 @@
   [data-dsh-mobile] [role='treeitem'] button {
     min-height: 36px;
   }
+
+  /* ---------- settings dialog (mobile fit) ----------
+
+     The stock settings panel is a fixed 800px two-column modal (188px nav
+     rail + content column). Squeezed into a phone it keeps the 188px rail
+     and crushes the content column to ~half the screen, deforming every
+     option row. On mobile the panel becomes a full-screen column: the nav
+     rail turns into a top horizontal tab strip (icon + label, scrollable),
+     and the content column takes all the remaining height. Follows
+     OpenCodeUI's mobile settings (full-screen dialog, sticky top tabs).
+     Selectors use the stable role/data-slot hooks only — [role=dialog]
+     for the panel, nav for the rail, the content column as the dialog's
+     last child — never hashed class names. */
+
+  /* Panel: full-screen column, flush to the safe-area insets (the stock
+     centered modal keeps its 24px margins and row direction). */
+  [data-dsh-mobile] [role='dialog'] {
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    border-radius: 0;
+    padding-top: var(--dshm-safe-top);
+    padding-bottom: var(--dshm-safe-bottom);
+  }
+
+  /* The modal layer itself: drop the desktop centering gaps on phones so
+     the dialog truly fills the viewport. The overlay's mask stays. */
+  [data-dsh-mobile] div[aria-modal='true'] {
+    inset: 0;
+  }
+
+  /* Nav rail -> top horizontal tab strip. The rail's own column layout is
+     overridden structurally: the title row shrinks to a one-line heading
+     and the cell list flows horizontally, scrolling when it overflows. */
+  [data-dsh-mobile] [role='dialog'] > nav {
+    flex: none;
+    flex-direction: column;
+    width: 100%;
+    padding: 12px 12px 0;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  /* Nav title: compact heading above the strip (stock 16/500, 12px pad). */
+  [data-dsh-mobile] [role='dialog'] > nav > div:first-child {
+    padding: 0 4px;
+    font-size: 14px;
+    line-height: 20px;
+  }
+
+  /* Nav cell list: horizontal scrollable row of pill tabs. */
+  [data-dsh-mobile] [role='dialog'] > nav > div:nth-child(2) {
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  [data-dsh-mobile] [role='dialog'] > nav > div:nth-child(2)::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Nav cells: pill tabs — no fixed width, horizontal padding, nowrap. */
+  [data-dsh-mobile] [role='dialog'] > nav button {
+    flex: none;
+    width: auto;
+    height: 34px;
+    padding: 0 14px;
+    gap: 6px;
+    border-radius: 999px;
+  }
+
+  /* Content column: the remaining height under the tab strip, its header
+     row stays on top and the options area scrolls inside. */
+  [data-dsh-mobile] [role='dialog'] > div:last-child {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+  }
+
+  /* Options area: bottom padding accounts for the home indicator. */
+  [data-dsh-mobile] [role='dialog'] > div:last-child > div:last-child {
+    padding: 0 16px calc(16px + var(--dshm-safe-bottom));
+    overflow-y: auto;
+  }
+
+  /* Settings section rows breathe on the narrow column. */
+  [data-dsh-mobile] [role='dialog'] [data-slot='settings.section'] > * {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
 }
 
 /* Coarse pointers (touch) never hover: drop scrollbars entirely. */
