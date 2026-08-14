@@ -46,9 +46,11 @@ const VIEWPORT_CONTENT =
 /**
  * The AppFrame keeps at least one of its two data attributes in every state
  * (a closed sidebar renders the rail, a closed details column renders zero
- * width), so the union always selects the frame and never a descendant.
+ * width), so the union always selects the frame and never a descendant. The
+ * attributes identify the frame wherever it sits in the tree — rc.5 wraps
+ * the frame in an extra shell div, so no `#root >` child prefix is assumed.
  */
-const FRAME_SELECTOR = '#root > div[data-sidebar-collapsed], #root > div[data-details-collapsed]'
+const FRAME_SELECTOR = 'div[data-sidebar-collapsed], div[data-details-collapsed]'
 
 /** The AppFrame element, or null before the layout entry mounts it. */
 function findFrame(): HTMLElement | null {

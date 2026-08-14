@@ -4,12 +4,13 @@
 
    Selectors key off stable, version-independent hooks only: the AppFrame's
    data-* attributes (data-sidebar-collapsed / data-details-collapsed, which
-   the frame div itself carries in both the workspace snapshot and the
-   official rc.2 bundles), the conversation skeleton's data seats
-   ([data-phase], [data-conversation-scroll], [data-composer-seat],
-   [data-composer-card]), and the drag handles' data-side attribute. No
-   hashed class names — the same sheet must work against unpatched
-   distributions.
+   the frame div itself carries in every snapshot and official bundle,
+   wherever it sits in the shell tree — rc.5 wraps the frame in an extra
+   shell div, so no `#root >` child prefix is assumed), the conversation
+   skeleton's data seats ([data-phase], [data-conversation-scroll],
+   [data-composer-seat], [data-composer-card]), and the drag handles'
+   data-side attribute. No hashed class names — the same sheet must work
+   against unpatched distributions.
 
    Mobile layout follows PiUI's chat pager with the sidebar left OPEN: the
    STOCK frame becomes a horizontal scroll-snap pager of two cards — the
@@ -65,8 +66,8 @@
      tracks into two snap pages: the sidebar page at the half-open width,
      the chat page full-width (so the chat stays visible beside the
      sidebar), the details track dropped (no phone use). */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed],
-  [data-dsh-mobile] #root > div[data-details-collapsed] {
+  [data-dsh-mobile] div[data-sidebar-collapsed],
+  [data-dsh-mobile] div[data-details-collapsed] {
     grid-template-columns: var(--dshm-sidebar-width) 100% 0 !important;
     overflow-x: auto;
     overflow-y: hidden;
@@ -76,8 +77,8 @@
   }
 
   /* Hide the pager's own horizontal scrollbar on every engine. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed]::-webkit-scrollbar,
-  [data-dsh-mobile] #root > div[data-details-collapsed]::-webkit-scrollbar {
+  [data-dsh-mobile] div[data-sidebar-collapsed]::-webkit-scrollbar,
+  [data-dsh-mobile] div[data-details-collapsed]::-webkit-scrollbar {
     width: 0;
     height: 0;
     display: none;
@@ -85,8 +86,8 @@
 
   /* The two live pages snap to the scrollport start (scroll-snap-stop keeps
      a fast swipe from skipping a page). */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(-n+2),
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(-n+2) {
+  [data-dsh-mobile] div[data-sidebar-collapsed] > :nth-child(-n+2),
+  [data-dsh-mobile] div[data-details-collapsed] > :nth-child(-n+2) {
     scroll-snap-align: start;
     scroll-snap-stop: always;
   }
@@ -97,23 +98,23 @@
      what separate the two (PiUI). The sidebar column itself is already
      bg-base; the sidebar shell's own fill is reset to transparent so every
      layer of the sidebar matches the chat. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child,
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child {
+  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child,
+  [data-dsh-mobile] div[data-details-collapsed] > :first-child {
     background: var(--dsw-alias-bg-base);
     border-right: none;
     padding-top: var(--dshm-safe-top);
   }
 
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child > :first-child,
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child > :first-child {
+  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child > :first-child,
+  [data-dsh-mobile] div[data-details-collapsed] > :first-child > :first-child {
     background: transparent;
   }
 
   /* Chat page: the PiUI rounded card — rounded and shadowed, clipped to the
      radius, no border so no divider line sits between it and the sidebar.
      The conversation renders completely untouched inside. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :nth-child(2),
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :nth-child(2) {
+  [data-dsh-mobile] div[data-sidebar-collapsed] > :nth-child(2),
+  [data-dsh-mobile] div[data-details-collapsed] > :nth-child(2) {
     border: none;
     border-radius: 16px;
     overflow: hidden;
@@ -133,8 +134,8 @@
      affordance; on the always-open phone sidebar it just dims the tail of
      the list. Selected structurally (the tree body's span child, next to
      the role=tree list), never by hashed class name. */
-  [data-dsh-mobile] #root > div[data-sidebar-collapsed] > :first-child div:has(> [role='tree']) > span,
-  [data-dsh-mobile] #root > div[data-details-collapsed] > :first-child div:has(> [role='tree']) > span {
+  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child div:has(> [role='tree']) > span,
+  [data-dsh-mobile] div[data-details-collapsed] > :first-child div:has(> [role='tree']) > span {
     display: none;
   }
 
@@ -193,3 +194,4 @@
     scroll-behavior: auto !important;
   }
 }
+

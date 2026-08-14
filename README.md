@@ -43,7 +43,7 @@ dsh plugin --profile web add link:E:/dev/dsh-mobile
 ## 开发
 
 ```sh
-pnpm install        # devDeps link 到 ../dsh2026/test-lehhair（DSH 源码，需先构建其 client 包）
+pnpm install        # devDeps link 到 ../dsh2026/deepseek-harness（DSH 源码，需先构建其 client 包）
 pnpm run check      # typecheck + test + build
 ```
 
@@ -58,5 +58,6 @@ src/client/
 ## License
 
 BSD-3-Clause
+
 
 
