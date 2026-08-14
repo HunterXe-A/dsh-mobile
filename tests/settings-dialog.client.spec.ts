@@ -66,6 +66,17 @@ describe('mobile.css settings-dialog contract', () => {
     expect(css).toContain(`overflow-y: auto`)
   })
 
+  it('fixes the shared Modal footer box model on mobile', () => {
+    // The ui-primitives Modal footer sizes content-box width + 24px side
+    // padding, spilling out of the card on phones. The border-box rule is
+    // pinned to the dialog's last child whose direct children are buttons,
+    // so it cannot hit the settings dialog's content column.
+    expect(css).toContain(`[role='dialog'] > :last-child:has(> button)`)
+    expect(css).toContain(`box-sizing: border-box`)
+    expect(css).toContain(`width: 100%`)
+    expect(css).toContain(`min-width: 0`)
+  })
+
   it('scopes every rule under the mobile attribute', () => {
     // Pull the rule bodies and ensure each starts with a [data-dsh-mobile]
     // scoped selector chain. At-rules (@media/@supports/@keyframes) are

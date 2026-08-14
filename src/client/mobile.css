@@ -301,6 +301,27 @@
     padding: 4px 16px 16px;
     overflow-y: auto;
   }
+
+  /* ---------- ui-primitives Modal (agent-preset viewer, deletes, etc.) ----------
+
+     The shared Modal card (ui-primitives) sizes its dialog content-box
+     (`width: min(380px, 100%)`, content-box box model) and its footer row
+     carries `padding: 0 24px` on a content-box width — so the footer's
+     real width is card-width + 48px and it spills out of the card on
+     phones (measured: footer right 413px vs card right 366px at 390px
+     viewport; hidden on desktop by the surrounding 24px mask padding).
+     Fix the box model on the footer row only (its direct children are
+     buttons; the settings dialog's last child is the content column, so
+     `:last-child:has(> button)` cannot collide). The card itself already
+     fits phones (342px at 390px), and the code `<pre>` scrolls both axes
+     on its own — only the footer needs the border-box correction. */
+  [data-dsh-mobile] [role='dialog'] > :last-child:has(> button) {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
 }
 
 /* Coarse pointers (touch) never hover: drop scrollbars entirely. */
