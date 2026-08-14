@@ -105,8 +105,16 @@
     padding-top: var(--dshm-safe-top);
   }
 
+  /* The sidebar shell's own fill (specific-sidebar-fill) is reset to
+     transparent — across the one or two wrapper levels the shell tree may
+     insert between the frame column and the sidebar root (rc.5 wraps the
+     sidebar in an extra div) — so every layer of the sidebar page matches
+     the chat background. Deeper elements keep their own states (hover,
+     active) untouched. */
   [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child > :first-child,
-  [data-dsh-mobile] div[data-details-collapsed] > :first-child > :first-child {
+  [data-dsh-mobile] div[data-details-collapsed] > :first-child > :first-child,
+  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child > :first-child > :first-child,
+  [data-dsh-mobile] div[data-details-collapsed] > :first-child > :first-child > :first-child {
     background: transparent;
   }
 
