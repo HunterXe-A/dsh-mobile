@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 /**
  * dsh-mobile settings-dialog contract: the mobile sheet must restructure the
- * stock 800px two-column settings modal into a full-screen column with a top
- * horizontal tab strip, keyed only off stable role/data-slot hooks and scoped
- * under [data-dsh-mobile] so desktop and uninstalled runs stay byte-identical.
+ * stock 800px two-column settings modal into a centered dialog card with a
+ * top horizontal tab strip, keeping the dialog affordance (margins, radius),
+ * lifting the actions + close buttons onto the title line, and keying every
+ * rule off stable role/data-slot hooks scoped under [data-dsh-mobile] so
+ * desktop and uninstalled runs stay byte-identical.
  */
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -19,17 +21,23 @@ describe('mobile.css settings-dialog contract', () => {
     expect(css).toContain(`[role='dialog'] > nav`)
     expect(css).toContain(`[role='dialog'] > div:last-child`)
     expect(css).toContain(`[role='dialog'] > div:last-child > div:last-child`)
-    // The modal layer itself is pinned to the viewport.
-    expect(css).toContain(`div[aria-modal='true']`)
+    expect(css).toContain(`[role='dialog'] > div:last-child > div:first-child`)
   })
 
-  it('restructures the panel into a full-screen column', () => {
-    // Panel: column direction, flush width/height, no radius (full screen).
+  it('keeps the panel a centered dialog card, not a full-screen sheet', () => {
+    // The stock modal is a dialog; mobile must keep the affordance — capped
+    // width/height with a viewport margin and a rounded radius — while
+    // switching to a single column.
     expect(css).toContain(`flex-direction: column`)
-    expect(css).toContain(`width: 100%`)
-    expect(css).toContain(`height: 100%`)
-    expect(css).toContain(`max-width: 100%`)
-    expect(css).toContain(`border-radius: 0`)
+    expect(css).toContain(`width: min(560px, calc(100vw - 32px))`)
+    expect(css).toContain(`height: min(720px, calc(100vh - 32px))`)
+    expect(css).toContain(`border-radius: 20px`)
+    // The dialog card itself must not be full-bleed: no zero-radius or
+    // viewport-filling width on the [role=dialog] rule body.
+    const dialogRule = css.match(/\[role='dialog'\]\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(dialogRule).not.toContain(`border-radius: 0`)
+    expect(dialogRule).not.toContain(`width: 100%`)
+    expect(dialogRule).not.toContain(`height: 100%`)
   })
 
   it('turns the nav rail into a top horizontal tab strip', () => {
@@ -40,6 +48,16 @@ describe('mobile.css settings-dialog contract', () => {
     expect(css).toContain(`overflow-x: auto`)
     expect(css).toContain(`border-radius: 999px`)
     expect(css).toContain(`width: auto`)
+  })
+
+  it('lifts the actions + close onto the dialog title line', () => {
+    // The content column's header row (actions + close) is absolutely
+    // positioned at the card's top-right so it sits on the same line as the
+    // nav title (top-left), instead of its own row below the tabs.
+    expect(css).toContain(`[role='dialog'] > div:last-child > div:first-child`)
+    expect(css).toContain(`position: absolute`)
+    expect(css).toContain(`top: 10px`)
+    expect(css).toContain(`right: 14px`)
   })
 
   it('keeps the content column full width and internally scrollable', () => {
