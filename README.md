@@ -59,5 +59,9 @@ src/client/
 
 BSD-3-Clause
 
+## 友情链接 / Friend Links
+
+- [DSHFind](https://dshfind.com/) — DeepSeek Harness 插件市场与学习社区
+
 
 
