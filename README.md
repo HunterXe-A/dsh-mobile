@@ -1,4 +1,4 @@
-[![dshfind](https://dshfind.com/api/badge/lehhair/dsh-mobile?lang=zh)](https://dshfind.com/zh/plugins/lehhair/dsh-mobile?ref=badge)
+[![dshfind](https://dshfind.com/api/card/lehhair/dsh-mobile?lang=zh)](https://dshfind.com/zh/plugins/lehhair/dsh-mobile?ref=badge)
 
 # dsh-mobile
 
