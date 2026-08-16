@@ -60,13 +60,22 @@ function findFrame(): HTMLElement | null {
 /**
  * The composer's model-name label (the first span of the model trigger
  * button). Its overflow drives the marquee: the controller measures
- * scrollWidth - clientWidth, tags the label with data-dshm-marquee and
- * feeds the shift/duration into CSS vars (mobile.css's dshm-marquee
- * keyframes animate text-indent, so the name slides inside the label's own
- * clip and can never overlap the effort badge or the context ring).
+ * scrollWidth - clientWidth, wraps a double copy of the text (each in its
+ * own item span) and tags the label with data-dshm-marquee + duration —
+ * mobile.css's dshm-marquee keyframes slide the runner by -50% (one text
+ * width + one gap) on the compositor, so the tail exits, a gap passes,
+ * then the head re-enters: a classic spaced ticker, clipped inside the
+ * label so it can never overlap the effort badge or the context ring.
  */
 const MODEL_LABEL_SELECTOR =
   "[data-composer-card] [data-slot='conversation.input.model'] button > span:first-child"
+
+/**
+ * The gap between marquee repetitions (px): one copy slides out, this
+ * blank space passes, then the head re-enters. Must match the item span's
+ * padding-right in mobile.css.
+ */
+const MARQUEE_GAP_PX = 32
 
 /**
  * The pager's chat-page snap position: the rendered width of the sidebar
@@ -223,13 +232,11 @@ export class MobileController implements MobileControllerHandle {
       label.style.removeProperty('--dshm-marquee-duration')
       const runner = label.firstElementChild
       if (runner !== null && runner.hasAttribute('data-dshm-marquee-runner')) {
-        // Unwrap keeping the FIRST half (the original nodes — the second
-        // half is the seamless-loop clone).
-        const nodes = Array.from(runner.childNodes)
-        const half = Math.floor(nodes.length / 2)
-        while (runner.firstChild !== null) runner.removeChild(runner.firstChild)
-        for (let i = 0; i < half; i++) label.append(nodes[i] as Node)
+        // Unwrap keeping the FIRST item's text (the original nodes — the
+        // second item is the seamless-loop clone).
+        const original = runner.firstElementChild?.firstChild ?? null
         runner.remove()
+        if (original !== null) label.append(original)
       }
     }
     this.#marqueeLabel = null
@@ -496,15 +503,15 @@ export class MobileController implements MobileControllerHandle {
    *  width, wrap a DOUBLE copy of the text in a transform layer
    *  (data-dshm-marquee-runner) and tag the label with data-dshm-marquee
    *  + --dshm-marquee-duration — the CSS slides the runner by -50% (one
-   *  text width) on the compositor and loops in ONE direction, so the
-   *  tail exits as the head re-enters (seamless ticker; animating
-   *  text-indent or bouncing alternate would reflow/jank on phones).
-   *  When the name fits — or motion is reduced — the runner is unwrapped
-   *  (original nodes restored, clone dropped) and the stock ellipsis
-   *  render returns. The label is re-resolved every time (the composer
-   *  remounts with the session skeleton), and the ResizeObserver is
-   *  re-hooked when it changes so pure layout squeezes (row width, font
-   *  loads) re-trigger the measure. */
+   *  text width + one MARQUEE_GAP) on the compositor and loops in ONE
+   *  direction: the tail exits, a gap passes, then the head re-enters
+   *  (classic spaced ticker; no alternate bounce). When the name fits —
+   *  or motion is reduced — the runner is unwrapped (original nodes
+   *  restored, clone dropped) and the stock ellipsis render returns. The
+   *  label is re-resolved every time (the composer remounts with the
+   *  session skeleton), and the ResizeObserver is re-hooked when it
+   *  changes so pure layout squeezes (row width, font loads) re-trigger
+   *  the measure. */
   readonly #syncMarquee = (): void => {
     const label = document.querySelector<HTMLElement>(MODEL_LABEL_SELECTOR)
     if (label !== this.#marqueeLabel) {
@@ -521,27 +528,39 @@ export class MobileController implements MobileControllerHandle {
     const overflow = label.scrollWidth - label.clientWidth
     if (overflow > 0 && !reduceMotion) {
       if (runner === null) {
+        // Two item spans, each holding one copy of the text; the CSS gives
+        // every item a trailing gap, so -50% = text + gap exactly and the
+        // loop is seamless WITH breathing room between repetitions.
         const nodes = Array.from(label.childNodes)
         const layer = document.createElement('span')
         layer.setAttribute('data-dshm-marquee-runner', '')
-        for (const node of nodes) layer.append(node)
-        for (const node of nodes) layer.append(node.cloneNode(true))
+        for (const node of nodes) {
+          const item = document.createElement('span')
+          item.setAttribute('data-dshm-marquee-item', '')
+          item.append(node)
+          layer.append(item)
+        }
+        for (const node of nodes) {
+          const item = document.createElement('span')
+          item.setAttribute('data-dshm-marquee-item', '')
+          item.append(node.cloneNode(true))
+          layer.append(item)
+        }
         label.append(layer)
       }
       label.dataset.dshmMarquee = ''
-      // After the wrap the label's scrollWidth is two text widths; one
-      // width at ~50px/s paces the ticker (~200px names -> 4s, floor 5s).
-      const textWidth = label.scrollWidth / 2
-      label.style.setProperty('--dshm-marquee-duration', `${Math.max(5, Math.round(textWidth / 50))}s`)
+      // After the wrap, scrollWidth = 2 text widths + 2 gaps; one text
+      // width + gap at ~50px/s paces the ticker (~200px names -> 5s).
+      const textWidth = (label.scrollWidth - MARQUEE_GAP_PX * 2) / 2
+      label.style.setProperty('--dshm-marquee-duration', `${Math.max(5, Math.round((textWidth + MARQUEE_GAP_PX) / 50))}s`)
     } else {
       delete label.dataset.dshmMarquee
       label.style.removeProperty('--dshm-marquee-duration')
       if (runner !== null) {
-        const nodes = Array.from(runner.childNodes)
-        const half = Math.floor(nodes.length / 2)
-        while (runner.firstChild !== null) runner.removeChild(runner.firstChild)
-        for (let i = 0; i < half; i++) label.append(nodes[i] as Node)
+        // Keep the FIRST item's text (the original nodes), drop the rest.
+        const original = runner.firstElementChild?.firstChild ?? null
         runner.remove()
+        if (original !== null) label.append(original)
       }
     }
   }

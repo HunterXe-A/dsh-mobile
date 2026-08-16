@@ -349,11 +349,16 @@ describe('MobileController model-name marquee', () => {
     controller.mount()
     expect(label.dataset.dshmMarquee).toBe('')
     expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('5s')
-    // The label's text lives in the transform layer as a DOUBLE copy — the
-    // -50% loop seam is invisible (one-way ticker, no alternate bounce).
+    // The label's text lives in the transform layer as TWO item spans (text
+    // + clone, each trailing a gap) — the -50% loop is a one-way SPACED
+    // ticker: tail exits, gap passes, head re-enters.
     const runner = label.firstElementChild
     expect(runner?.getAttribute('data-dshm-marquee-runner')).toBe('')
     expect(runner?.textContent).toBe('DeepSeek-V4-FlashDeepSeek-V4-Flash')
+    expect(runner?.children.length).toBe(2)
+    for (const item of Array.from(runner?.children ?? [])) {
+      expect(item.getAttribute('data-dshm-marquee-item')).toBe('')
+    }
     // The name shortens (or the row widens): the layout change clears the
     // marquee, unwraps the runner (original nodes back, clone dropped) and
     // restores the stock ellipsis render.

@@ -65,7 +65,7 @@
   }
 
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
-    max-width: 200px;
+    max-width: 160px;
   }
 }
 
@@ -325,6 +325,15 @@
     min-width: 0;
   }
 
+  /* The model trigger chip itself is the trailing cluster's only
+     shrinkable seat: it yields width to the ring and the send button
+     before anything else can be squeezed (its inner label keeps the
+     marquee window above). */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
   /* The context ring keeps its fixed seat (stock 28px circle, flex:none
      already on the button; the wrapper is pinned too, so the ring can
      never be squeezed against the model chip or the send button). */
@@ -357,30 +366,39 @@
 
   /* Model name: capped width with a floor so the marquee window stays
      readable. At rest the stock ellipsis hints; when the name overflows,
-     the controller wraps a DOUBLE copy of the text in a
-     [data-dshm-marquee-runner] layer (transform target) and tags the
+     the controller wraps TWO item spans (text + text clone, each with a
+     trailing gap) in a [data-dshm-marquee-runner] layer and tags the
      label with data-dshm-marquee + --dshm-marquee-duration. The keyframes
-     slide the runner by -50% (exactly one text width) on the COMPOSITOR
-     and loop in ONE direction — the second copy is already in place, so
-     the tail exits and the head re-enters seamlessly, classic ticker —
-     clipped INSIDE the label's overflow, so it can never overlap the
-     effort badge, the context ring or anything else. */
+     slide the runner by -50% (one text width + one gap) on the
+     COMPOSITOR and loop in ONE direction — tail exits, gap passes, head
+     re-enters: a classic SPACED ticker, no alternate bounce. The label's
+     translateZ(0) is clipping insurance: iOS Safari's compositing quirk
+     lets a transformed child escape an overflow:hidden ancestor
+     otherwise — that escape is what looked like the name overlapping the
+     ring. */
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
-    max-width: 112px;
+    max-width: 96px;
     min-width: 48px;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    /* This element becomes its own compositing ancestor, so the animating
+       runner layer cannot bleed past it on iOS Safari. */
+    transform: translateZ(0);
   }
 
-  /* The transform layer: the label's own text twice, wrapped by the
-     controller only while overflowing. inline-block + nowrap keeps the
-     layer at twice the text width, so -50% lands exactly one text width
-     ahead — the loop seam is invisible. */
+  /* The transform layer: two item spans (text + clone), each with a
+     trailing gap — -50% lands exactly one text width + one gap ahead, so
+     the loop seam is invisible AND the repetitions breathe. */
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child > [data-dshm-marquee-runner] {
     display: inline-block;
     white-space: nowrap;
-    will-change: transform;
+  }
+
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] [data-dshm-marquee-runner] > [data-dshm-marquee-item] {
+    display: inline-block;
+    white-space: nowrap;
+    padding-right: 32px;
   }
 
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee] > [data-dshm-marquee-runner] {
