@@ -50,12 +50,27 @@
   text-size-adjust: 100%;
 }
 
-/* Browsers with dvh use the dynamic viewport: iOS Safari URL-bar safe. */
+/* Browsers with dvh use the dynamic viewport: iOS Safari URL-bar safe.
+   `#root` height is `100%`, NOT `100dvh`: the host shell (dsh-app on
+   Android) pads `body` below the real status bar with box-sizing:border-box
+   and sizes `#root` at 100% — a 100dvh root would overflow that padding and
+   add a vertical scrollbar (root fills the viewport, body adds padding).
+   `100%` resolves against the body content box in BOTH cases: with the host
+   padding it is the remaining height; in a plain PWA body itself is 100dvh,
+   so the root fills the viewport the same way. Browsers without dvh get the
+   same 100%/100vh pairing from the fallback below. */
 @supports (height: 100dvh) {
-  [data-dsh-mobile] body,
-  [data-dsh-mobile] #root {
+  [data-dsh-mobile] body {
     height: 100dvh;
   }
+}
+
+[data-dsh-mobile] body {
+  height: 100vh;
+}
+
+[data-dsh-mobile] #root {
+  height: 100%;
 }
 
 /* ---------- mobile pager (narrow viewports) ---------- */
@@ -120,7 +135,14 @@
 
   /* Chat page: the PiUI rounded card — rounded and shadowed, clipped to the
      radius, no border so no divider line sits between it and the sidebar.
-     The conversation renders completely untouched inside. */
+     The conversation renders completely untouched inside.
+     The radius/shadow are a SIDEBAR-page affordance: while the chat card is
+     exposed as a sliver beside the sidebar it reads as a distinct card. On
+     the CHAT page (data-dshm-page=chat on <html>, kept by the controller)
+     the card goes full-bleed — square corners, no shadow, edge to edge —
+     so the user reading the conversation never sees a rounded border or
+     shadow inside the screen, exactly like OpenCodeUI's full-width mobile
+     chat. The inner layout is untouched; only the card chrome changes. */
   [data-dsh-mobile] div[data-sidebar-collapsed] > :nth-child(2),
   [data-dsh-mobile] div[data-details-collapsed] > :nth-child(2) {
     border: none;
@@ -135,6 +157,15 @@
     transform-style: preserve-3d;
     backface-visibility: hidden;
     will-change: transform;
+  }
+
+  /* Chat page (resting on the conversation): full-bleed, no card chrome —
+     square corners and no shadow so nothing inside the screen suggests a
+     card. Only the exposed sliver state (sidebar page) keeps the radius. */
+  [data-dsh-mobile][data-dshm-page='chat'] div[data-sidebar-collapsed] > :nth-child(2),
+  [data-dsh-mobile][data-dshm-page='chat'] div[data-details-collapsed] > :nth-child(2) {
+    border-radius: 0;
+    box-shadow: none;
   }
 
   /* The session list's bottom scroll fade (ui-workspace .fade, a 72px
