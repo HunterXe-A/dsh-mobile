@@ -58,6 +58,17 @@ function findFrame(): HTMLElement | null {
 }
 
 /**
+ * The composer's model-name label (the first span of the model trigger
+ * button). Its overflow drives the marquee: the controller measures
+ * scrollWidth - clientWidth, tags the label with data-dshm-marquee and
+ * feeds the shift/duration into CSS vars (mobile.css's dshm-marquee
+ * keyframes animate text-indent, so the name slides inside the label's own
+ * clip and can never overlap the effort badge or the context ring).
+ */
+const MODEL_LABEL_SELECTOR =
+  "[data-composer-card] [data-slot='conversation.input.model'] button > span:first-child"
+
+/**
  * The pager's chat-page snap position: the rendered width of the sidebar
  * page column (the always-open card). Falls back to the frame's own width
  * while the layout has not settled (offsetWidth is 0 before first layout).
@@ -93,6 +104,10 @@ export class MobileController implements MobileControllerHandle {
   #mql: MediaQueryList | null = null
   #frameObserver: MutationObserver | null = null
   #rootObserver: MutationObserver | null = null
+  #composerObserver: MutationObserver | null = null
+  #marqueeLabel: HTMLElement | null = null
+  #marqueeRO: ResizeObserver | null = null
+  #marqueeFrame: number | null = null
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
   #keyboardFrame: number | null = null
@@ -155,8 +170,26 @@ export class MobileController implements MobileControllerHandle {
     if (root !== null) {
       this.#rootObserver = new MutationObserver(() => { this.#ensureFrameObserver() })
       this.#rootObserver.observe(root, { childList: true })
+      // The composer mounts/unmounts with the session skeleton and the
+      // model name swaps in place: any subtree change can move the label's
+      // overflow state, so re-measure on every mutation (rAF-throttled —
+      // the check is one querySelector + two reads, cheap even while
+      // streaming tokens mutate the tree every frame).
+      this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync() })
+      this.#composerObserver.observe(root, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      })
+    }
+    // Layout-only overflow changes (row squeeze, font load) do not mutate
+    // the tree: watch the label's box too. jsdom has no ResizeObserver, so
+    // the guard keeps tests running on the mutation path alone.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.#marqueeRO = new ResizeObserver(() => { this.#requestMarqueeSync() })
     }
     this.#ensureFrameObserver()
+    this.#requestMarqueeSync()
 
     // The always-open phone layout: expand the sidebar once (AppFrame
     // auto-collapses it to the rail on narrow viewports) so its content
@@ -179,19 +212,31 @@ export class MobileController implements MobileControllerHandle {
     this.#frameObserver = null
     this.#rootObserver?.disconnect()
     this.#rootObserver = null
+    this.#composerObserver?.disconnect()
+    this.#composerObserver = null
+    this.#marqueeRO?.disconnect()
+    this.#marqueeRO = null
+    // Leave the model label as the stock ellipsis render (no marquee trail).
+    if (this.#marqueeLabel !== null) {
+      this.#marqueeLabel.removeAttribute('data-dshm-marquee')
+      this.#marqueeLabel.style.removeProperty('--dshm-marquee-shift')
+      this.#marqueeLabel.style.removeProperty('--dshm-marquee-duration')
+    }
+    this.#marqueeLabel = null
     this.#mql?.removeEventListener('change', this.#onBreakpointChange)
     this.#mql = null
     window.removeEventListener('resize', this.#onWindowResize)
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer]) {
-      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame]) {
+      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#keyboardFrame = null
     this.#mountFrame = null
     this.#resizeTimer = null
     this.#settleTimer = null
+    this.#marqueeFrame = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
     if (this.#viewportMeta !== null) {
@@ -309,7 +354,8 @@ export class MobileController implements MobileControllerHandle {
     this.#placeOnChat('auto')
   }
 
-  /** Width reflow within one breakpoint side: keep the active page put. */
+  /** Width reflow within one breakpoint side: keep the active page put and
+   *  re-measure the model-name overflow (the row width drives it). */
   readonly #onWindowResize = (): void => {
     if (this.#resizeTimer !== null) return
     this.#resizeTimer = window.setTimeout(() => {
@@ -323,6 +369,7 @@ export class MobileController implements MobileControllerHandle {
       frame.scrollTo({ left: onChat ? chatLeft : 0, behavior: 'auto' })
       this.#mirrorPage(frame)
       this.#updateFlipVars(frame)
+      this.#requestMarqueeSync()
     }, 120)
   }
 
@@ -423,5 +470,44 @@ export class MobileController implements MobileControllerHandle {
       ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
       : 0
     html.style.setProperty('--dshm-keyboard-inset', `${inset}px`)
+  }
+
+  /** Model-name marquee: re-measure on the next frame (mutation streams
+   *  can fire every frame while tokens stream). */
+  readonly #requestMarqueeSync = (): void => {
+    if (this.#marqueeFrame !== null) return
+    this.#marqueeFrame = requestAnimationFrame(() => {
+      this.#marqueeFrame = null
+      this.#syncMarquee()
+    })
+  }
+
+  /** Measure the model-name label: when the name overflows its capped
+   *  width, tag it with data-dshm-marquee and feed the slide distance and
+   *  pace into CSS vars; otherwise restore the stock ellipsis state. The
+   *  label is re-resolved every time (the composer remounts with the
+   *  session skeleton), and the ResizeObserver is re-hooked when it
+   *  changes so pure layout squeezes (row width, font loads) re-trigger
+   *  the measure. */
+  readonly #syncMarquee = (): void => {
+    const label = document.querySelector<HTMLElement>(MODEL_LABEL_SELECTOR)
+    if (label !== this.#marqueeLabel) {
+      this.#marqueeRO?.disconnect()
+      this.#marqueeLabel = label
+      if (label !== null) this.#marqueeRO?.observe(label)
+    }
+    if (label === null) return
+    const overflow = label.scrollWidth - label.clientWidth
+    if (overflow > 0) {
+      label.dataset.dshmMarquee = ''
+      label.style.setProperty('--dshm-marquee-shift', `${-overflow}px`)
+      // Pace scales with the slide distance: 88px overflows take ~9s a
+      // loop, tiny ones ~5s — no frantic flicker on short names.
+      label.style.setProperty('--dshm-marquee-duration', `${Math.max(5, Math.round(overflow / 10))}s`)
+    } else {
+      delete label.dataset.dshmMarquee
+      label.style.removeProperty('--dshm-marquee-shift')
+      label.style.removeProperty('--dshm-marquee-duration')
+    }
   }
 }

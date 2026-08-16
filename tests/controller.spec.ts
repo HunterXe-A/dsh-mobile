@@ -285,3 +285,117 @@ describe('MobileController keyboard inset', () => {
     controller.dispose()
   })
 })
+
+describe('MobileController model-name marquee', () => {
+  /** Stub ResizeObserver (jsdom has none) capturing its callback. */
+  function stubResizeObserver(): { fire: () => void } {
+    let callback: ResizeObserverCallback | null = null
+    class FakeRO {
+      constructor(cb: ResizeObserverCallback) { callback = cb }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal('ResizeObserver', FakeRO)
+    return { fire: () => callback?.([], {} as ResizeObserver) }
+  }
+
+  /** Mount the composer-shaped model trigger under #root: slot wrapper ->
+   *  root div -> trigger button -> label span (first) + effort span. */
+  function makeModelTrigger(): HTMLElement {
+    const card = document.createElement('div')
+    card.setAttribute('data-composer-card', '')
+    const row = document.createElement('div')
+    const trailing = document.createElement('div')
+    const slot = document.createElement('div')
+    slot.setAttribute('data-slot', 'conversation.input.model')
+    const seat = document.createElement('div')
+    const button = document.createElement('button')
+    const label = document.createElement('span')
+    label.textContent = 'DeepSeek-V4-Flash'
+    const effort = document.createElement('span')
+    effort.textContent = 'High'
+    button.append(label, effort)
+    seat.append(button)
+    slot.append(seat)
+    trailing.append(slot)
+    row.append(trailing)
+    card.append(row)
+    document.getElementById('root')?.append(card)
+    return label
+  }
+
+  it('tags the overflowing label with the marquee markers and paces the slide', () => {
+    stubMatchMedia(true)
+    const ro = stubResizeObserver()
+    // Sync rAF that leaves no frame id behind: the controller gates on
+    // #marqueeFrame !== null, and a numeric return would re-arm the gate
+    // after the callback already ran (the browser's async rAF returns a
+    // real id, so this is purely a stub-shape concern).
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return null as unknown as number
+    })
+    makeFrame()
+    const label = makeModelTrigger()
+    Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 200 })
+    Object.defineProperty(label, 'clientWidth', { configurable: true, value: 112 })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    expect(label.dataset.dshmMarquee).toBe('')
+    expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('-88px')
+    expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('9s')
+    // The name shortens (or the row widens): the layout change clears the
+    // marquee and restores the stock ellipsis render.
+    Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 90 })
+    ro.fire()
+    expect(label.hasAttribute('data-dshm-marquee')).toBe(false)
+    expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('')
+    controller.dispose()
+  })
+
+  it('picks up a composer that mounts after the controller', () => {
+    stubMatchMedia(true)
+    stubResizeObserver()
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return null as unknown as number
+    })
+    const frame = makeFrame()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    expect(document.querySelector('[data-dshm-marquee]')).toBeNull()
+    const label = makeModelTrigger()
+    Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 200 })
+    Object.defineProperty(label, 'clientWidth', { configurable: true, value: 112 })
+    // The composer mutation is delivered async by the MutationObserver
+    // (microtask), then the throttled sync runs on the stub rAF.
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(label.dataset.dshmMarquee).toBe('')
+        expect(frame.scrollLeft).toBe(300)
+        resolve()
+      }, 0)
+    })
+  })
+
+  it('removes every marquee marker on dispose', () => {
+    stubMatchMedia(true)
+    stubResizeObserver()
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return null as unknown as number
+    })
+    makeFrame()
+    const label = makeModelTrigger()
+    Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 200 })
+    Object.defineProperty(label, 'clientWidth', { configurable: true, value: 112 })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    expect(label.dataset.dshmMarquee).toBe('')
+    controller.dispose()
+    expect(label.hasAttribute('data-dshm-marquee')).toBe(false)
+    expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('')
+    expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('')
+  })
+})

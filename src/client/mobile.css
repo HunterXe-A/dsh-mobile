@@ -261,17 +261,31 @@
      The stock row (attach + modes … model + context + send) is squeezed on
      phones because .trailing is flex:none: the right cluster can never
      shrink, so the left tools get starved and the + chip deforms against
-     the card edge. On phones the row instead: (1) makes the permission
-     chip ALWAYS icon-only (the stock @container 460px collapse only kicks
-     in below that row width, so wide mobile screens 560-768px would show
-     the label again), (2) caps the model name width and lets it scroll
-     horizontally (swipe to reveal the full name — no menu conflict: a tap
-     still opens the picker), and (3) lets the trailing cluster shrink so
-     the scrollable model label — the only shrinkable seat — absorbs the
-     deficit instead of the + button. Selectors use stable hooks only:
-     aria-label prefix for the permission trigger (localized), the
-     input.model data-slot for the model trigger, aria-haspopup=listbox for
-     the commands + chip, and :has(> [data-slot=…]) for the trailing seat. */
+     the card edge. On phones the row instead: (1) tightens the tool gaps
+     so the permission chip sits close to the + button, (2) makes the
+     permission chip ALWAYS icon-only (the stock @container 460px collapse
+     only kicks in below that row width, so wide mobile screens 560-768px
+     would show the label again), (3) caps the model name width and
+     auto-scrolls it (marquee) when it overflows — the controller measures
+     the overflow and sets a data attribute plus shift/duration CSS vars,
+     (4) lets the trailing cluster shrink so the model label absorbs the
+     deficit, and (5) pins every fixed-size chip (+, permission, context
+     ring, send) with flex:none so nothing ever deforms, squeezes or
+     overlaps. Selectors use stable hooks only: aria-label prefix for the
+     permission trigger (localized), the input.model data-slot for the
+     model trigger, aria-haspopup=listbox for the commands + chip, and
+     :has(> [data-slot=…]) for the trailing seat. */
+
+  /* Tool gaps: the + chip sits close to the permission chip (stock 16px)
+     and the row's left/right clusters stay snug (stock 12px) — the room
+     goes to the model name instead. */
+  [data-dsh-mobile] [data-composer-card] div:has(> button[aria-haspopup='listbox']) {
+    gap: 8px;
+  }
+
+  [data-dsh-mobile] [data-composer-card] > div:last-child {
+    gap: 8px;
+  }
 
   /* The + (commands) chip: a fixed 36px circle (touch-size, matching the
      send button) that can never shrink or deform. */
@@ -303,31 +317,48 @@
   }
 
   /* The trailing cluster may shrink (stock .trailing is flex:none): with
-     the model label scrollable below, the row can always fit — the label
-     window absorbs every extra pixel of deficit, so no toolbar chip ever
+     the model label absorbing below, the row can always fit — the label
+     window takes every extra pixel of deficit, so no toolbar chip ever
      deforms. */
   [data-dsh-mobile] [data-composer-card] div:has(> [data-slot='conversation.input.model']) {
     flex: 0 1 auto;
     min-width: 0;
   }
 
-  /* Model name: capped width, horizontally scrollable — swipe reveals the
-     full name, the stock ellipsis still hints at rest, and
-     overscroll-behavior:contain keeps the swipe from chaining into the
-     pager flip. The label keeps min-width:0, so on very narrow phones it
-     shrinks further but stays swipeable. */
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
-    max-width: 112px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    white-space: nowrap;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
+  /* The context ring keeps its fixed seat (stock 28px circle, flex:none
+     already on the button; the wrapper is pinned too, so the ring can
+     never be squeezed against the model chip or the send button). */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] + span {
+    flex: none;
   }
 
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child::-webkit-scrollbar {
-    display: none;
+  /* Model name: capped width with a floor so the marquee window stays
+     readable. At rest the stock ellipsis hints; when the name overflows,
+     the controller sets data-dshm-marquee (+ --dshm-marquee-shift and
+     --dshm-marquee-duration) and the label plays an auto-scroll loop —
+     pause, slide to the end, pause, slide back — clipped INSIDE the label
+     (text-indent, not transform), so it can never overlap the effort
+     badge, the context ring or anything else. */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
+    max-width: 112px;
+    min-width: 48px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee] {
+    text-overflow: clip;
+    animation: dshm-marquee var(--dshm-marquee-duration, 6s) ease-in-out infinite alternate;
+  }
+
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee]:hover {
+    animation-play-state: paused;
+  }
+
+  @keyframes dshm-marquee {
+    0%, 15% { text-indent: 0; }
+    50%, 100% { text-indent: var(--dshm-marquee-shift, -2em); }
   }
 
   /* ---------- settings dialog (mobile fit) ----------
@@ -485,10 +516,16 @@
   }
 }
 
-/* Respect reduced-motion: programmatic flips snap instead of sliding. */
+/* Respect reduced-motion: programmatic flips snap instead of sliding, and
+   the model-name marquee falls back to the static ellipsis. */
 @media (prefers-reduced-motion: reduce) {
   [data-dsh-mobile] {
     scroll-behavior: auto !important;
+  }
+
+  [data-dsh-mobile] [data-slot='conversation.input.model'] button > span:first-child {
+    animation: none !important;
+    text-overflow: ellipsis;
   }
 }
 
