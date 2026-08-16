@@ -56,10 +56,16 @@
    cap toward HALF the viewport (50vw, capped at 420px), so at 768px the
    two pages meet 50/50 (PiUI's half-open symmetry) and the chat sliver
    never loses its tap-to-return presence. Growth is monotone with the
-   viewport — never narrower than the phone cap, so no regression. */
+   viewport — never narrower than the phone cap, so no regression. The
+   composer has the room too: the model-name cap relaxes from 112px to
+   200px (still scrollable on overflow). */
 @media (min-width: 560px) and (max-width: 768px) {
   [data-dsh-mobile] {
     --dshm-sidebar-width: clamp(360px, 50vw, 420px);
+  }
+
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
+    max-width: 200px;
   }
 }
 
@@ -248,6 +254,80 @@
   [data-dsh-mobile] [data-composer-card] button,
   [data-dsh-mobile] [role='treeitem'] button {
     min-height: 36px;
+  }
+
+  /* ---------- composer toolbar (mobile fit) ----------
+
+     The stock row (attach + modes … model + context + send) is squeezed on
+     phones because .trailing is flex:none: the right cluster can never
+     shrink, so the left tools get starved and the + chip deforms against
+     the card edge. On phones the row instead: (1) makes the permission
+     chip ALWAYS icon-only (the stock @container 460px collapse only kicks
+     in below that row width, so wide mobile screens 560-768px would show
+     the label again), (2) caps the model name width and lets it scroll
+     horizontally (swipe to reveal the full name — no menu conflict: a tap
+     still opens the picker), and (3) lets the trailing cluster shrink so
+     the scrollable model label — the only shrinkable seat — absorbs the
+     deficit instead of the + button. Selectors use stable hooks only:
+     aria-label prefix for the permission trigger (localized), the
+     input.model data-slot for the model trigger, aria-haspopup=listbox for
+     the commands + chip, and :has(> [data-slot=…]) for the trailing seat. */
+
+  /* The + (commands) chip: a fixed 36px circle (touch-size, matching the
+     send button) that can never shrink or deform. */
+  [data-dsh-mobile] [data-composer-card] button[aria-haspopup='listbox'] {
+    flex: none;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+  }
+
+  /* Permission chip: icon-only 36px control — the label and chevron spans
+     drop, the shield glyph alone identifies the mode (the trigger's
+     aria-label stays for a11y). If a host-configured mode carries no glyph
+     (no first span), the fallback keeps its label: the first child is
+     never hidden. */
+  [data-dsh-mobile] [data-composer-card] button[aria-label*='访问模式'],
+  [data-dsh-mobile] [data-composer-card] button[aria-label*='Access mode'] {
+    flex: none;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  [data-dsh-mobile] [data-composer-card] button[aria-label*='访问模式'] > span:not(:first-child),
+  [data-dsh-mobile] [data-composer-card] button[aria-label*='Access mode'] > span:not(:first-child) {
+    display: none;
+  }
+
+  /* The trailing cluster may shrink (stock .trailing is flex:none): with
+     the model label scrollable below, the row can always fit — the label
+     window absorbs every extra pixel of deficit, so no toolbar chip ever
+     deforms. */
+  [data-dsh-mobile] [data-composer-card] div:has(> [data-slot='conversation.input.model']) {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  /* Model name: capped width, horizontally scrollable — swipe reveals the
+     full name, the stock ellipsis still hints at rest, and
+     overscroll-behavior:contain keeps the swipe from chaining into the
+     pager flip. The label keeps min-width:0, so on very narrow phones it
+     shrinks further but stays swipeable. */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
+    max-width: 112px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child::-webkit-scrollbar {
+    display: none;
   }
 
   /* ---------- settings dialog (mobile fit) ----------
