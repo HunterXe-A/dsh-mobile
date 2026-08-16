@@ -2,11 +2,12 @@
 
 # dsh-mobile
 
-DSH WebUI 移动端适配插件（**PiUI 翻页器结构**）：窄屏下框架本身就是横向 scroll-snap 翻页器，两页卡片——**半开侧边栏页**（`min(360px, 50vw)`）+ **全宽聊天页**。滑到侧边栏页后聊天卡片仍在右边露出一半（PiUI 同款 overlayWidth 效果），聊天渲染零改动。纯客户端适配，零核心改动——官方 rc.2 发行版直接可用。
+DSH WebUI 移动端适配插件（**PiUI 翻页器结构**）：窄屏下框架本身就是横向 scroll-snap 翻页器，两页卡片——**半开侧边栏页**（手机 `clamp(280px, 70vw, 360px)`；宽屏 560-768px 随视口涨到 `clamp(360px, 50vw, 420px)`，内容拉伸铺满整页）+ **全宽聊天页**。滑到侧边栏页后聊天卡片仍在右边露出一半（PiUI 同款 overlayWidth 效果），聊天渲染零改动。纯客户端适配，零核心改动——官方 rc.2 发行版直接可用。
 
 ## 功能
 
 - **PiUI 翻页器**：≤768px 时三栏框架重排为两页横向 snap 轨道——侧边栏页半开宽（约半个视口），聊天页全宽；**滑到侧边栏页时聊天卡片在右半露出（半边信息流）**，PiUI 同款结构
+- **宽度自适应**：560-768px 宽屏（横屏手机、大折叠屏、小平板）下侧边栏页从 360px 随视口涨到约半个视口（上限 420px），侧边栏壳冻结的桌面 280px 内容同步拉伸铺满页列——屏幕变宽，侧边栏内容跟着变大，不再留白
 - **侧边栏始终完整渲染**：窄屏下控制器自动展开 AppFrame 折叠的侧边栏并保持（滑动翻页**不同步状态**）——侧边栏列的内容在聊天全屏时也完整留在 DOM 里，滑回来立即可见，**绝不"滑动才跟着渲染"**
 - **同色区分**：侧边栏与信息流同色（平页，无圆角阴影）；**只有信息流是卡片**（16px 圆角 + 阴影 + 细边框），PiUI 同款视觉
 - **PiUI 3D 翻页**：滚动时聊天卡片 `rotateY/scale` 跟随（`transform-origin` 偏向滑动侧），`prefers-reduced-motion` 关闭
@@ -50,7 +51,7 @@ dsh plugin --profile web add link:E:/dev/dsh-mobile
 ## 设计约束（为什么是 CSS + 轻量控制器，而不是替换 root）
 
 - dsh 的 `root` 槽位是框架内建的 `single` 槽，由 ui-layout 独占——插件不能替换 AppFrame（`single slot already has a registration` 直接抛错）
-- 因此翻页器直接作用于 **AppFrame 本身**：CSS 把 grid 轨道重排为两页（`min(360px, 50vw) 100% 0`）+ `overflow-x: auto` + `scroll-snap`，控制器只滚动它、镜像页面状态、并在滑动结束后吸附+同步——全部基于稳定 data 属性（`data-sidebar-collapsed` / `data-details-collapsed`，rc.2 与工作区快照一致）与对话骨架的 data 座位，**不依赖任何哈希类名**
+- 因此翻页器直接作用于 **AppFrame 本身**：CSS 把 grid 轨道重排为两页（`clamp(280px, 70vw, 360px) 100% 0`，560-768px 宽屏为 `clamp(360px, 50vw, 420px)`，并把侧边栏壳的冻结展开宽度用 `min-width:100%` 拉伸到整页）+ `overflow-x: auto` + `scroll-snap`，控制器只滚动它、镜像页面状态、并在滑动结束后吸附+同步——全部基于稳定 data 属性（`data-sidebar-collapsed` / `data-details-collapsed`，rc.2 与工作区快照一致）与对话骨架的 data 座位，**不依赖任何哈希类名**
 - **已知限制**：详情列在窄屏下仍遵循框架让步链自动关闭（核心行为，插件不越权），故 pager 只有两页
 - 键盘 inset 依赖 `visualViewport`（现代浏览器/PWA 均有）；不支持时退化为 0
 

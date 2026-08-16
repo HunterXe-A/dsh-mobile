@@ -14,11 +14,17 @@
 
    Mobile layout follows PiUI's chat pager with the sidebar left OPEN: the
    STOCK frame becomes a horizontal scroll-snap pager of two cards — the
-   sidebar page is a half-open card (the desktop docked width capped at 55vw,
-   PiUI's overlayWidth idea) and the chat page is full-width, so swiping to
-   the sidebar still shows the chat peeking out on the right. Both cards are
-   rounded and shadowed, PiUI style. The controller keeps the sidebar
-   expanded (native wide rendering) and flips the pager on state changes. */
+   sidebar page is a half-open card (phone: ~70vw capped at 360px; wide
+   mobile screens 560-768px — landscape phones, large foldables, small
+   tablets: half the viewport capped at 420px — PiUI's overlayWidth idea)
+   and the chat page is full-width, so swiping to the sidebar still shows
+   the chat peeking out on the right. The sidebar shell freezes its content
+   at the desktop 280px inline width for its collapse slide; the pager
+   stretches it to fill the page column (min-width rule in the pager
+   section), so on wide screens the content adapts to the width instead of
+   staying phone-sized. Both cards are rounded and shadowed, PiUI style.
+   The controller keeps the sidebar expanded (native wide rendering) and
+   flips the pager on state changes. */
 
 /* ---------- tokens ---------- */
 [data-dsh-mobile] {
@@ -30,10 +36,12 @@
   --dshm-safe-left: env(safe-area-inset-left, 0px);
   /* Virtual-keyboard inset, driven by the controller (visualViewport). */
   --dshm-keyboard-inset: 0px;
-  /* Sidebar page width: at least the sidebar's own 280px content width (so
-     it is never clipped), at most 360px, with ~70vw on phones — the chat
+  /* Sidebar page width (phones): at least the sidebar's own 280px content
+     width (so it is never clipped), at most 360px, with ~70vw — the chat
      card then shows only a sliver on the right (PiUI's overlayWidth idea,
-     tightened so the chat does not dominate). */
+     tightened so the chat does not dominate). Wide mobile screens
+     (560-768px) override this token below so the page grows toward half
+     the viewport. */
   --dshm-sidebar-width: clamp(280px, 70vw, 360px);
   /* PiUI-style 3D flip of the chat card, driven by the controller on scroll. */
   --dshm-rotate: 0deg;
@@ -41,6 +49,18 @@
   --dshm-offset-x: 0px;
   --dshm-origin-x: 50% 50%;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Wide mobile screens (560-768px — landscape phones, large foldables,
+   small tablets like the iPad mini): the sidebar page grows past the phone
+   cap toward HALF the viewport (50vw, capped at 420px), so at 768px the
+   two pages meet 50/50 (PiUI's half-open symmetry) and the chat sliver
+   never loses its tap-to-return presence. Growth is monotone with the
+   viewport — never narrower than the phone cap, so no regression. */
+@media (min-width: 560px) and (max-width: 768px) {
+  [data-dsh-mobile] {
+    --dshm-sidebar-width: clamp(360px, 50vw, 420px);
+  }
 }
 
 /* ---------- shell ergonomics ---------- */
@@ -131,6 +151,23 @@
   [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child > :first-child > :first-child,
   [data-dsh-mobile] div[data-details-collapsed] > :first-child > :first-child > :first-child {
     background: transparent;
+  }
+
+  /* The sidebar shell freezes its content at the expanded desktop width
+     (inline style) so the collapse slide can clip it in place; the phone
+     layout keeps the sidebar open, so that frozen width would leave the
+     right side of the page empty on wide screens — the content would stay
+     280px while the page grew. Min-width (not width) stretches the shell
+     to fill the page column: the inline width stays the floor, so the
+     content can never shrink below its desktop layout. The attribute
+     selector is exact — the shell root is the ONLY inline-width element in
+     the sidebar tree (ui-sidebar / ui-workspace / ui-settings carry no
+     inline styles; the primitives Modal portals out of the tree), and
+     scoping under the frame's first child keeps the frame's own inline
+     grid-template-columns out of reach. */
+  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child div[style*='width'],
+  [data-dsh-mobile] div[data-details-collapsed] > :first-child div[style*='width'] {
+    min-width: 100%;
   }
 
   /* Chat page: the PiUI rounded card — rounded and shadowed, clipped to the
