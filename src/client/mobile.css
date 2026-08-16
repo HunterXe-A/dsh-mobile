@@ -332,16 +332,39 @@
     flex: none;
   }
 
+  /* The ring button matches the permission chip's behavior: a 36px circle
+     (the stock 28px + the touch min-height rule made it a squeezed 28x36
+     pill), with the glyph stepped up to 16px like the shield. */
+  [data-dsh-mobile] [data-composer-card] button[aria-haspopup='dialog'] {
+    width: 36px;
+    height: 36px;
+  }
+
+  [data-dsh-mobile] [data-composer-card] [aria-haspopup='dialog'] svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Context ring's breakdown panel (the 264px stock card): keep it compact
+     on phones — capped to the viewport with a margin. (The settings-dialog
+     rules are scoped to :has(> nav) precisely so this small dialog keeps
+     its own geometry.) */
+  [data-dsh-mobile] [data-composer-card] [role='dialog'] {
+    box-sizing: border-box;
+    width: min(264px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+  }
+
   /* Model name: capped width with a floor so the marquee window stays
      readable. At rest the stock ellipsis hints; when the name overflows,
-     the controller wraps the text in a [data-dshm-marquee-runner] layer
-     (transform target), tags the label with data-dshm-marquee and feeds
-     --dshm-marquee-shift / --dshm-marquee-duration. The keyframes animate
-     the runner's translateX on the COMPOSITOR — pause, slide to the end,
-     pause, slide back — clipped INSIDE the label's overflow, so the loop
-     is GPU-smooth (no per-frame toolbar reflow, unlike text-indent) and
-     can never overlap the effort badge, the context ring or anything
-     else. */
+     the controller wraps a DOUBLE copy of the text in a
+     [data-dshm-marquee-runner] layer (transform target) and tags the
+     label with data-dshm-marquee + --dshm-marquee-duration. The keyframes
+     slide the runner by -50% (exactly one text width) on the COMPOSITOR
+     and loop in ONE direction — the second copy is already in place, so
+     the tail exits and the head re-enters seamlessly, classic ticker —
+     clipped INSIDE the label's overflow, so it can never overlap the
+     effort badge, the context ring or anything else. */
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
     max-width: 112px;
     min-width: 48px;
@@ -350,10 +373,10 @@
     text-overflow: ellipsis;
   }
 
-  /* The transform layer: the label's own text, wrapped by the controller
-     only while overflowing. inline-block + nowrap keeps the layer at the
-     full text width, so translateX(-shift) lands the text END exactly at
-     the label's right edge. */
+  /* The transform layer: the label's own text twice, wrapped by the
+     controller only while overflowing. inline-block + nowrap keeps the
+     layer at twice the text width, so -50% lands exactly one text width
+     ahead — the loop seam is invisible. */
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child > [data-dshm-marquee-runner] {
     display: inline-block;
     white-space: nowrap;
@@ -361,7 +384,7 @@
   }
 
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee] > [data-dshm-marquee-runner] {
-    animation: dshm-marquee var(--dshm-marquee-duration, 6s) ease-in-out infinite alternate;
+    animation: dshm-marquee var(--dshm-marquee-duration, 8s) linear infinite;
   }
 
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee]:hover > [data-dshm-marquee-runner] {
@@ -369,8 +392,8 @@
   }
 
   @keyframes dshm-marquee {
-    0%, 15% { transform: translateX(0); }
-    50%, 100% { transform: translateX(var(--dshm-marquee-shift, -2em)); }
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
   }
 
   /* ---------- settings dialog (mobile fit) ----------
@@ -392,8 +415,12 @@
 
   /* Panel: centered card, single column. The stock modal layer already
      centers it (overlay flex + mask); keeping width/height capped below
-     the viewport with a margin preserves the dialog affordance. */
-  [data-dsh-mobile] [role='dialog'] {
+     the viewport with a margin preserves the dialog affordance.
+     The selector is scoped to the settings dialog (:has(> nav) — only the
+     settings panel carries a nav rail): a bare [role=dialog] would also
+     hit the composer's context-ring panel (a 264px breakdown card) and
+     blow it up to the settings geometry. */
+  [data-dsh-mobile] [role='dialog']:has(> nav) {
     flex-direction: column;
     width: min(560px, calc(100vw - 32px));
     height: min(720px, calc(100vh - 32px));
@@ -454,8 +481,9 @@
      vertical center as the nav title, so "打开配置文件" and the close
      button sit beside the title instead of on their own row. The column
      itself then starts below the tab strip (its header no longer takes
-     flow height). */
-  [data-dsh-mobile] [role='dialog'] > div:last-child > div:first-child {
+     flow height). Scoped to the settings dialog (:has(> nav)): without
+     it, the context-ring panel's bar segments would be lifted too. */
+  [data-dsh-mobile] [role='dialog']:has(> nav) > div:last-child > div:first-child {
     position: absolute;
     top: 10px;
     right: 14px;
@@ -470,12 +498,12 @@
   }
 
   /* The lifted header must not reserve flow height below the tabs. */
-  [data-dsh-mobile] [role='dialog'] > div:last-child > div:first-child + * {
+  [data-dsh-mobile] [role='dialog']:has(> nav) > div:last-child > div:first-child + * {
     margin-top: 0;
   }
 
   /* Content column: the remaining height under the tab strip. */
-  [data-dsh-mobile] [role='dialog'] > div:last-child {
+  [data-dsh-mobile] [role='dialog']:has(> nav) > div:last-child {
     flex: 1;
     min-height: 0;
     width: 100%;
@@ -488,7 +516,7 @@
      leftover/stacked padding would read as "left has more whitespace,
      right looks clipped". 16px both sides keeps rows breathing without
      crowding the selectors; the area scrolls. */
-  [data-dsh-mobile] [role='dialog'] > div:last-child > div:last-child {
+  [data-dsh-mobile] [role='dialog']:has(> nav) > div:last-child > div:last-child {
     padding: 4px 16px 16px;
     overflow-y: auto;
   }

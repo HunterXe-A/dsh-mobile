@@ -16,12 +16,14 @@ const css = readFileSync(resolve(process.cwd(), 'src/client/mobile.css'), 'utf8'
 describe('mobile.css settings-dialog contract', () => {
   it('targets the dialog through stable hooks only', () => {
     // The panel is the [role=dialog] element; the nav rail is its <nav>
-    // child; the content column is the dialog's last child. No hashed class.
+    // child; the content column is the dialog's last child. The parent
+    // rules are scoped to :has(> nav) so the composer's context-ring
+    // dialog (no nav) keeps its own geometry. No hashed class.
     expect(css).toContain(`[role='dialog']`)
     expect(css).toContain(`[role='dialog'] > nav`)
-    expect(css).toContain(`[role='dialog'] > div:last-child`)
-    expect(css).toContain(`[role='dialog'] > div:last-child > div:last-child`)
-    expect(css).toContain(`[role='dialog'] > div:last-child > div:first-child`)
+    expect(css).toContain(`[role='dialog']:has(> nav) > div:last-child`)
+    expect(css).toContain(`[role='dialog']:has(> nav) > div:last-child > div:last-child`)
+    expect(css).toContain(`[role='dialog']:has(> nav) > div:last-child > div:first-child`)
   })
 
   it('keeps the panel a centered dialog card, not a full-screen sheet', () => {
@@ -34,7 +36,7 @@ describe('mobile.css settings-dialog contract', () => {
     expect(css).toContain(`border-radius: 20px`)
     // The dialog card itself must not be full-bleed: no zero-radius or
     // viewport-filling width on the [role=dialog] rule body.
-    const dialogRule = css.match(/\[role='dialog'\]\s*\{[^}]*\}/)?.[0] ?? ''
+    const dialogRule = css.match(/\[role='dialog'\]:has\(> nav\)\s*\{[^}]*\}/)?.[0] ?? ''
     expect(dialogRule).not.toContain(`border-radius: 0`)
     expect(dialogRule).not.toContain(`width: 100%`)
     expect(dialogRule).not.toContain(`height: 100%`)
@@ -54,7 +56,7 @@ describe('mobile.css settings-dialog contract', () => {
     // The content column's header row (actions + close) is absolutely
     // positioned at the card's top-right so it sits on the same line as the
     // nav title (top-left), instead of its own row below the tabs.
-    expect(css).toContain(`[role='dialog'] > div:last-child > div:first-child`)
+    expect(css).toContain(`[role='dialog']:has(> nav) > div:last-child > div:first-child`)
     expect(css).toContain(`position: absolute`)
     expect(css).toContain(`top: 10px`)
     expect(css).toContain(`right: 14px`)

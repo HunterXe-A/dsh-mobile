@@ -348,18 +348,19 @@ describe('MobileController model-name marquee', () => {
     const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     expect(label.dataset.dshmMarquee).toBe('')
-    expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('-88px')
-    expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('9s')
-    // The label's text lives in the transform layer (GPU-composited slide).
+    expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('5s')
+    // The label's text lives in the transform layer as a DOUBLE copy — the
+    // -50% loop seam is invisible (one-way ticker, no alternate bounce).
     const runner = label.firstElementChild
     expect(runner?.getAttribute('data-dshm-marquee-runner')).toBe('')
-    expect(runner?.textContent).toBe('DeepSeek-V4-Flash')
+    expect(runner?.textContent).toBe('DeepSeek-V4-FlashDeepSeek-V4-Flash')
     // The name shortens (or the row widens): the layout change clears the
-    // marquee, unwraps the runner and restores the stock ellipsis render.
+    // marquee, unwraps the runner (original nodes back, clone dropped) and
+    // restores the stock ellipsis render.
     Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 90 })
     ro.fire()
     expect(label.hasAttribute('data-dshm-marquee')).toBe(false)
-    expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('')
+    expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('')
     expect((label.firstElementChild?.hasAttribute('data-dshm-marquee-runner') ?? false)).toBe(false)
     expect(label.textContent).toBe('DeepSeek-V4-Flash')
     controller.dispose()
@@ -407,7 +408,6 @@ describe('MobileController model-name marquee', () => {
     expect(label.dataset.dshmMarquee).toBe('')
     controller.dispose()
     expect(label.hasAttribute('data-dshm-marquee')).toBe(false)
-    expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('')
     expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('')
     expect((label.firstElementChild?.hasAttribute('data-dshm-marquee-runner') ?? false)).toBe(false)
     expect(label.textContent).toBe('DeepSeek-V4-Flash')

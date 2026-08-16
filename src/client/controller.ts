@@ -220,11 +220,15 @@ export class MobileController implements MobileControllerHandle {
     if (this.#marqueeLabel !== null) {
       const label = this.#marqueeLabel
       label.removeAttribute('data-dshm-marquee')
-      label.style.removeProperty('--dshm-marquee-shift')
       label.style.removeProperty('--dshm-marquee-duration')
       const runner = label.firstElementChild
       if (runner !== null && runner.hasAttribute('data-dshm-marquee-runner')) {
-        while (runner.firstChild !== null) label.insertBefore(runner.firstChild, runner)
+        // Unwrap keeping the FIRST half (the original nodes — the second
+        // half is the seamless-loop clone).
+        const nodes = Array.from(runner.childNodes)
+        const half = Math.floor(nodes.length / 2)
+        while (runner.firstChild !== null) runner.removeChild(runner.firstChild)
+        for (let i = 0; i < half; i++) label.append(nodes[i] as Node)
         runner.remove()
       }
     }
@@ -489,17 +493,18 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Measure the model-name label: when the name overflows its capped
-   *  width, wrap the label's text in a transform layer (data-dshm-marquee-
-   *  runner), tag the label with data-dshm-marquee and feed the slide
-   *  distance and pace into CSS vars — the CSS animates the runner's
-   *  translateX on the compositor, so the loop is GPU-smooth (animating
-   *  text-indent instead would reflow the whole toolbar every frame and
-   *  jank on phones). When the name fits — or motion is reduced — the
-   *  runner is unwrapped and the stock ellipsis render is restored. The
-   *  label is re-resolved every time (the composer remounts with the
-   *  session skeleton), and the ResizeObserver is re-hooked when it
-   *  changes so pure layout squeezes (row width, font loads) re-trigger
-   *  the measure. */
+   *  width, wrap a DOUBLE copy of the text in a transform layer
+   *  (data-dshm-marquee-runner) and tag the label with data-dshm-marquee
+   *  + --dshm-marquee-duration — the CSS slides the runner by -50% (one
+   *  text width) on the compositor and loops in ONE direction, so the
+   *  tail exits as the head re-enters (seamless ticker; animating
+   *  text-indent or bouncing alternate would reflow/jank on phones).
+   *  When the name fits — or motion is reduced — the runner is unwrapped
+   *  (original nodes restored, clone dropped) and the stock ellipsis
+   *  render returns. The label is re-resolved every time (the composer
+   *  remounts with the session skeleton), and the ResizeObserver is
+   *  re-hooked when it changes so pure layout squeezes (row width, font
+   *  loads) re-trigger the measure. */
   readonly #syncMarquee = (): void => {
     const label = document.querySelector<HTMLElement>(MODEL_LABEL_SELECTOR)
     if (label !== this.#marqueeLabel) {
@@ -516,22 +521,26 @@ export class MobileController implements MobileControllerHandle {
     const overflow = label.scrollWidth - label.clientWidth
     if (overflow > 0 && !reduceMotion) {
       if (runner === null) {
+        const nodes = Array.from(label.childNodes)
         const layer = document.createElement('span')
         layer.setAttribute('data-dshm-marquee-runner', '')
-        while (label.firstChild !== null) layer.append(label.firstChild)
+        for (const node of nodes) layer.append(node)
+        for (const node of nodes) layer.append(node.cloneNode(true))
         label.append(layer)
       }
       label.dataset.dshmMarquee = ''
-      label.style.setProperty('--dshm-marquee-shift', `${-overflow}px`)
-      // Pace scales with the slide distance: 88px overflows take ~9s a
-      // loop, tiny ones ~5s — no frantic flicker on short names.
-      label.style.setProperty('--dshm-marquee-duration', `${Math.max(5, Math.round(overflow / 10))}s`)
+      // After the wrap the label's scrollWidth is two text widths; one
+      // width at ~50px/s paces the ticker (~200px names -> 4s, floor 5s).
+      const textWidth = label.scrollWidth / 2
+      label.style.setProperty('--dshm-marquee-duration', `${Math.max(5, Math.round(textWidth / 50))}s`)
     } else {
       delete label.dataset.dshmMarquee
-      label.style.removeProperty('--dshm-marquee-shift')
       label.style.removeProperty('--dshm-marquee-duration')
       if (runner !== null) {
-        while (runner.firstChild !== null) label.insertBefore(runner.firstChild, runner)
+        const nodes = Array.from(runner.childNodes)
+        const half = Math.floor(nodes.length / 2)
+        while (runner.firstChild !== null) runner.removeChild(runner.firstChild)
+        for (let i = 0; i < half; i++) label.append(nodes[i] as Node)
         runner.remove()
       }
     }
