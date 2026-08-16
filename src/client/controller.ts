@@ -218,9 +218,15 @@ export class MobileController implements MobileControllerHandle {
     this.#marqueeRO = null
     // Leave the model label as the stock ellipsis render (no marquee trail).
     if (this.#marqueeLabel !== null) {
-      this.#marqueeLabel.removeAttribute('data-dshm-marquee')
-      this.#marqueeLabel.style.removeProperty('--dshm-marquee-shift')
-      this.#marqueeLabel.style.removeProperty('--dshm-marquee-duration')
+      const label = this.#marqueeLabel
+      label.removeAttribute('data-dshm-marquee')
+      label.style.removeProperty('--dshm-marquee-shift')
+      label.style.removeProperty('--dshm-marquee-duration')
+      const runner = label.firstElementChild
+      if (runner !== null && runner.hasAttribute('data-dshm-marquee-runner')) {
+        while (runner.firstChild !== null) label.insertBefore(runner.firstChild, runner)
+        runner.remove()
+      }
     }
     this.#marqueeLabel = null
     this.#mql?.removeEventListener('change', this.#onBreakpointChange)
@@ -483,8 +489,13 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Measure the model-name label: when the name overflows its capped
-   *  width, tag it with data-dshm-marquee and feed the slide distance and
-   *  pace into CSS vars; otherwise restore the stock ellipsis state. The
+   *  width, wrap the label's text in a transform layer (data-dshm-marquee-
+   *  runner), tag the label with data-dshm-marquee and feed the slide
+   *  distance and pace into CSS vars — the CSS animates the runner's
+   *  translateX on the compositor, so the loop is GPU-smooth (animating
+   *  text-indent instead would reflow the whole toolbar every frame and
+   *  jank on phones). When the name fits — or motion is reduced — the
+   *  runner is unwrapped and the stock ellipsis render is restored. The
    *  label is re-resolved every time (the composer remounts with the
    *  session skeleton), and the ResizeObserver is re-hooked when it
    *  changes so pure layout squeezes (row width, font loads) re-trigger
@@ -497,8 +508,19 @@ export class MobileController implements MobileControllerHandle {
       if (label !== null) this.#marqueeRO?.observe(label)
     }
     if (label === null) return
+    const runner = label.firstElementChild !== null
+        && label.firstElementChild.hasAttribute('data-dshm-marquee-runner')
+      ? label.firstElementChild
+      : null
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const overflow = label.scrollWidth - label.clientWidth
-    if (overflow > 0) {
+    if (overflow > 0 && !reduceMotion) {
+      if (runner === null) {
+        const layer = document.createElement('span')
+        layer.setAttribute('data-dshm-marquee-runner', '')
+        while (label.firstChild !== null) layer.append(label.firstChild)
+        label.append(layer)
+      }
       label.dataset.dshmMarquee = ''
       label.style.setProperty('--dshm-marquee-shift', `${-overflow}px`)
       // Pace scales with the slide distance: 88px overflows take ~9s a
@@ -508,6 +530,10 @@ export class MobileController implements MobileControllerHandle {
       delete label.dataset.dshmMarquee
       label.style.removeProperty('--dshm-marquee-shift')
       label.style.removeProperty('--dshm-marquee-duration')
+      if (runner !== null) {
+        while (runner.firstChild !== null) label.insertBefore(runner.firstChild, runner)
+        runner.remove()
+      }
     }
   }
 }

@@ -3,7 +3,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileController, PAGE_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
 
-/** A MediaQueryList stub (jsdom has none) that records its change listener. */
+/** A MediaQueryList stub (jsdom has none) that records its change listener.
+ *  The prefers-reduced-motion query always reports false (marquee enabled);
+ *  every other query reports the given `matches`. */
 function stubMatchMedia(matches: boolean): { fire: (next: boolean) => void } {
   const listeners = new Set<(e: MediaQueryListEvent) => void>()
   const mql = {
@@ -16,7 +18,10 @@ function stubMatchMedia(matches: boolean): { fire: (next: boolean) => void } {
     removeListener: vi.fn(),
     dispatchEvent: vi.fn(),
   } as unknown as MediaQueryList
-  vi.stubGlobal('matchMedia', vi.fn(() => mql))
+  vi.stubGlobal('matchMedia', vi.fn((query: string) => {
+    if (query.includes('prefers-reduced-motion')) return { matches: false } as MediaQueryList
+    return mql
+  }))
   return {
     fire: (next: boolean): void => {
       ;(mql as unknown as { matches: boolean }).matches = next
@@ -325,7 +330,7 @@ describe('MobileController model-name marquee', () => {
     return label
   }
 
-  it('tags the overflowing label with the marquee markers and paces the slide', () => {
+  it('tags the overflowing label, wraps the text in the transform layer and paces the slide', () => {
     stubMatchMedia(true)
     const ro = stubResizeObserver()
     // Sync rAF that leaves no frame id behind: the controller gates on
@@ -345,12 +350,18 @@ describe('MobileController model-name marquee', () => {
     expect(label.dataset.dshmMarquee).toBe('')
     expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('-88px')
     expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('9s')
+    // The label's text lives in the transform layer (GPU-composited slide).
+    const runner = label.firstElementChild
+    expect(runner?.getAttribute('data-dshm-marquee-runner')).toBe('')
+    expect(runner?.textContent).toBe('DeepSeek-V4-Flash')
     // The name shortens (or the row widens): the layout change clears the
-    // marquee and restores the stock ellipsis render.
+    // marquee, unwraps the runner and restores the stock ellipsis render.
     Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 90 })
     ro.fire()
     expect(label.hasAttribute('data-dshm-marquee')).toBe(false)
     expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('')
+    expect((label.firstElementChild?.hasAttribute('data-dshm-marquee-runner') ?? false)).toBe(false)
+    expect(label.textContent).toBe('DeepSeek-V4-Flash')
     controller.dispose()
   })
 
@@ -373,13 +384,14 @@ describe('MobileController model-name marquee', () => {
     return new Promise<void>((resolve) => {
       setTimeout(() => {
         expect(label.dataset.dshmMarquee).toBe('')
+        expect(label.firstElementChild?.getAttribute('data-dshm-marquee-runner')).toBe('')
         expect(frame.scrollLeft).toBe(300)
         resolve()
       }, 0)
     })
   })
 
-  it('removes every marquee marker on dispose', () => {
+  it('removes every marquee marker and unwraps the runner on dispose', () => {
     stubMatchMedia(true)
     stubResizeObserver()
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -397,5 +409,7 @@ describe('MobileController model-name marquee', () => {
     expect(label.hasAttribute('data-dshm-marquee')).toBe(false)
     expect(label.style.getPropertyValue('--dshm-marquee-shift')).toBe('')
     expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('')
+    expect((label.firstElementChild?.hasAttribute('data-dshm-marquee-runner') ?? false)).toBe(false)
+    expect(label.textContent).toBe('DeepSeek-V4-Flash')
   })
 })

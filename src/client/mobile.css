@@ -328,17 +328,20 @@
   /* The context ring keeps its fixed seat (stock 28px circle, flex:none
      already on the button; the wrapper is pinned too, so the ring can
      never be squeezed against the model chip or the send button). */
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] + span {
+  [data-dsh-mobile] [data-composer-card] div:has(> [data-slot='conversation.input.model']) > :not([data-slot]) {
     flex: none;
   }
 
   /* Model name: capped width with a floor so the marquee window stays
      readable. At rest the stock ellipsis hints; when the name overflows,
-     the controller sets data-dshm-marquee (+ --dshm-marquee-shift and
-     --dshm-marquee-duration) and the label plays an auto-scroll loop —
-     pause, slide to the end, pause, slide back — clipped INSIDE the label
-     (text-indent, not transform), so it can never overlap the effort
-     badge, the context ring or anything else. */
+     the controller wraps the text in a [data-dshm-marquee-runner] layer
+     (transform target), tags the label with data-dshm-marquee and feeds
+     --dshm-marquee-shift / --dshm-marquee-duration. The keyframes animate
+     the runner's translateX on the COMPOSITOR — pause, slide to the end,
+     pause, slide back — clipped INSIDE the label's overflow, so the loop
+     is GPU-smooth (no per-frame toolbar reflow, unlike text-indent) and
+     can never overlap the effort badge, the context ring or anything
+     else. */
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
     max-width: 112px;
     min-width: 48px;
@@ -347,18 +350,27 @@
     text-overflow: ellipsis;
   }
 
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee] {
-    text-overflow: clip;
+  /* The transform layer: the label's own text, wrapped by the controller
+     only while overflowing. inline-block + nowrap keeps the layer at the
+     full text width, so translateX(-shift) lands the text END exactly at
+     the label's right edge. */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child > [data-dshm-marquee-runner] {
+    display: inline-block;
+    white-space: nowrap;
+    will-change: transform;
+  }
+
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee] > [data-dshm-marquee-runner] {
     animation: dshm-marquee var(--dshm-marquee-duration, 6s) ease-in-out infinite alternate;
   }
 
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee]:hover {
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee]:hover > [data-dshm-marquee-runner] {
     animation-play-state: paused;
   }
 
   @keyframes dshm-marquee {
-    0%, 15% { text-indent: 0; }
-    50%, 100% { text-indent: var(--dshm-marquee-shift, -2em); }
+    0%, 15% { transform: translateX(0); }
+    50%, 100% { transform: translateX(var(--dshm-marquee-shift, -2em)); }
   }
 
   /* ---------- settings dialog (mobile fit) ----------
@@ -517,15 +529,15 @@
 }
 
 /* Respect reduced-motion: programmatic flips snap instead of sliding, and
-   the model-name marquee falls back to the static ellipsis. */
+   the model-name marquee falls back to the static ellipsis (the controller
+   does not even wrap the runner under reduce; this rule is the belt). */
 @media (prefers-reduced-motion: reduce) {
   [data-dsh-mobile] {
     scroll-behavior: auto !important;
   }
 
-  [data-dsh-mobile] [data-slot='conversation.input.model'] button > span:first-child {
+  [data-dsh-mobile] [data-slot='conversation.input.model'] button > span:first-child > [data-dshm-marquee-runner] {
     animation: none !important;
-    text-overflow: ellipsis;
   }
 }
 
