@@ -440,6 +440,34 @@
     to { transform: translateX(-50%); }
   }
 
+  /* ---------- message tail stats (mobile fit) ----------
+
+     The assistant turn's tail clock row — "03:09 · 用时 1分42秒 · 首
+     token 5.5秒 · 114 tok/s" — can outgrow narrow screens (the readings
+     are one nowrap line). On phones the label takes the row's leftover
+     width (flex:1, min-width:0) and scrolls horizontally: swipe to see
+     the rest, no scrollbar anywhere, and overscroll-behavior:contain
+     keeps the swipe from chaining into the pager flip. Keyed off the
+     turn tail's data-turn-tail root (assistant only): the row is the
+     root's last child, the time label its last span — user messages'
+     clock (timeStart) sits FIRST in the row, so it can never match.
+     No hashed class names. */
+
+  [data-dsh-mobile] [data-turn-tail] > div:last-child > span:last-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  [data-dsh-mobile] [data-turn-tail] > div:last-child > span:last-child::-webkit-scrollbar {
+    display: none;
+  }
+
   /* ---------- settings dialog (mobile fit) ----------
 
      The stock settings panel is a fixed 800px two-column modal (188px nav
