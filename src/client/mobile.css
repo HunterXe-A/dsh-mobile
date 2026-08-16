@@ -281,13 +281,29 @@
 
   /* Tool gaps: the + chip sits close to the permission chip (stock 16px)
      and the row's left/right clusters stay snug (stock 12px) — the room
-     goes to the model name instead. */
+     goes to the model name instead. The row also becomes the model picker
+     menu's positioning context (see the root-static rule below), so the
+     menu right-aligns to the WHOLE row and dodges the screen edges on
+     narrow phones. */
   [data-dsh-mobile] [data-composer-card] div:has(> button[aria-haspopup='listbox']) {
     gap: 8px;
   }
 
   [data-dsh-mobile] [data-composer-card] > div:last-child {
     gap: 8px;
+    position: relative;
+  }
+
+  /* The model picker menu is anchored right:0 to its .root seat (stock
+     position:relative), whose right edge sits ~94px left of the row's
+     right edge (ring + send + gaps) — a 240px menu then opens past the
+     screen's LEFT edge on ≤360px phones (measured: left = vw - 366). On
+     mobile the seat loses its positioning and the ROW becomes the
+     containing block: the menu right-aligns to the row, so its left edge
+     is vw - 32 - 248 ≈ 40px at 320px — full 240px width, no clipping,
+     no magic numbers. */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] > div {
+    position: static;
   }
 
   /* The + (commands) chip: a fixed 36px circle (touch-size, matching the
