@@ -57,14 +57,17 @@
    two pages meet 50/50 (PiUI's half-open symmetry) and the chat sliver
    never loses its tap-to-return presence. Growth is monotone with the
    viewport — never narrower than the phone cap, so no regression. The
-   composer has the room too: the model-name cap relaxes from 112px to
-   200px (still scrollable on overflow). */
+   composer has the room too: the model-name cap relaxes from 96px to
+   160px. */
 @media (min-width: 560px) and (max-width: 768px) {
   [data-dsh-mobile] {
     --dshm-sidebar-width: clamp(360px, 50vw, 420px);
   }
 
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
+  /* The trigger is pinned via aria-haspopup='menu': a bare `button` would
+     also hit the open picker's option rows and nav cells (their first
+     spans are optionCopy/cellLabel) and deform the menu card. */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child {
     max-width: 160px;
   }
 }
@@ -328,8 +331,9 @@
   /* The model trigger chip itself is the trailing cluster's only
      shrinkable seat: it yields width to the ring and the send button
      before anything else can be squeezed (its inner label keeps the
-     marquee window above). */
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button {
+     marquee window above). Pinned via aria-haspopup='menu' so the open
+     picker's option/cell rows keep their own geometry. */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] {
     flex: 0 1 auto;
     min-width: 0;
   }
@@ -375,8 +379,14 @@
      translateZ(0) is clipping insurance: iOS Safari's compositing quirk
      lets a transformed child escape an overflow:hidden ancestor
      otherwise — that escape is what looked like the name overlapping the
-     ring. */
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child {
+     ring.
+     The trigger is pinned via aria-haspopup='menu' throughout: the open
+     picker's option rows (first span = optionCopy, a flex column) and
+     nav cells (first span = cellLabel) live under the same slot div, and
+     a bare `button > span:first-child` would apply this whole block to
+     them — nowrap + translateZ deforming the menu card (the report this
+     rule set fixed). */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child {
     max-width: 96px;
     min-width: 48px;
     overflow: hidden;
@@ -390,7 +400,7 @@
   /* The transform layer: two item spans (text + clone), each with a
      trailing gap — -50% lands exactly one text width + one gap ahead, so
      the loop seam is invisible AND the repetitions breathe. */
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child > [data-dshm-marquee-runner] {
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child > [data-dshm-marquee-runner] {
     display: inline-block;
     white-space: nowrap;
   }
@@ -401,11 +411,11 @@
     padding-right: 32px;
   }
 
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee] > [data-dshm-marquee-runner] {
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child[data-dshm-marquee] > [data-dshm-marquee-runner] {
     animation: dshm-marquee var(--dshm-marquee-duration, 8s) linear infinite;
   }
 
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button > span:first-child[data-dshm-marquee]:hover > [data-dshm-marquee-runner] {
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child[data-dshm-marquee]:hover > [data-dshm-marquee-runner] {
     animation-play-state: paused;
   }
 
@@ -582,7 +592,7 @@
     scroll-behavior: auto !important;
   }
 
-  [data-dsh-mobile] [data-slot='conversation.input.model'] button > span:first-child > [data-dshm-marquee-runner] {
+  [data-dsh-mobile] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child > [data-dshm-marquee-runner] {
     animation: none !important;
   }
 }

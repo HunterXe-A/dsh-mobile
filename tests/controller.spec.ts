@@ -316,6 +316,10 @@ describe('MobileController model-name marquee', () => {
     slot.setAttribute('data-slot', 'conversation.input.model')
     const seat = document.createElement('div')
     const button = document.createElement('button')
+    // Matches the real ModelSelect trigger: the controller pins the label
+    // via aria-haspopup='menu' so the open picker's option rows (whose
+    // first span is an optionCopy) are never mistaken for it.
+    button.setAttribute('aria-haspopup', 'menu')
     const label = document.createElement('span')
     label.textContent = 'DeepSeek-V4-Flash'
     const effort = document.createElement('span')

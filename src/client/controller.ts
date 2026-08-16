@@ -58,8 +58,10 @@ function findFrame(): HTMLElement | null {
 }
 
 /**
- * The composer's model-name label (the first span of the model trigger
- * button). Its overflow drives the marquee: the controller measures
+ * The composer's model-name label (the first span of the model TRIGGER
+ * button — pinned via aria-haspopup='menu' so the open picker's option
+ * rows, whose first span is a flex-column optionCopy, are never mistaken
+ * for it). Its overflow drives the marquee: the controller measures
  * scrollWidth - clientWidth, wraps a double copy of the text (each in its
  * own item span) and tags the label with data-dshm-marquee + duration —
  * mobile.css's dshm-marquee keyframes slide the runner by -50% (one text
@@ -68,7 +70,7 @@ function findFrame(): HTMLElement | null {
  * label so it can never overlap the effort badge or the context ring.
  */
 const MODEL_LABEL_SELECTOR =
-  "[data-composer-card] [data-slot='conversation.input.model'] button > span:first-child"
+  "[data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child"
 
 /**
  * The gap between marquee repetitions (px): one copy slides out, this
