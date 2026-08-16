@@ -374,6 +374,16 @@
     height: 16px;
   }
 
+  /* Send / stop: the stock 34px circle + the touch min-height rule makes
+     it a squeezed 34x36 ellipse (same mechanism as the ring pill) — the
+     trailing cluster's direct buttons (send, and stop while interruptible;
+     the ring lives inside its span wrapper, the model chip in its slot)
+     get the full 36px circle back, matching the rest of the toolbar. */
+  [data-dsh-mobile] [data-composer-card] div:has(> [data-slot='conversation.input.model']) > button {
+    width: 36px;
+    height: 36px;
+  }
+
   /* Context ring's breakdown panel (the 264px stock card): keep it compact
      on phones — capped to the viewport with a margin. (The settings-dialog
      rules are scoped to :has(> nav) precisely so this small dialog keeps
