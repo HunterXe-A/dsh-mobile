@@ -468,6 +468,25 @@
     display: none;
   }
 
+  /* ---------- session header (mobile fit) ----------
+
+     The background-jobs menu anchors left:0 to its trigger's .root seat
+     (the header actions cluster, right-aligned): a 336px menu opens to
+     the RIGHT of a seat that already sits near the screen edge, so its
+     right border gets clipped on phones (the stock max-width caps the
+     width but not the left offset). On mobile the menu flips to
+     right-aligned against the trigger: its right edge lands ~16px from
+     the screen edge and the width cap (calc(100vw - 32px)) then pins the
+     left edge at >=16px — full width, never clipped, rows already elide
+     (.label/.status ellipsis in the stock sheet). Keyed by the
+     localized list aria-label, never hashed classes. */
+
+  [data-dsh-mobile] [data-phase='active'] > header ul[aria-label*='后台任务'],
+  [data-dsh-mobile] [data-phase='active'] > header ul[aria-label*='Background jobs'] {
+    left: auto;
+    right: 0;
+  }
+
   /* ---------- settings dialog (mobile fit) ----------
 
      The stock settings panel is a fixed 800px two-column modal (188px nav
