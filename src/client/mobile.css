@@ -450,6 +450,35 @@
     to { transform: translateX(-50%); }
   }
 
+  /* ---------- question takeover card (mobile fit) ----------
+
+     The ui-user-questions QuestionComposer card caps at min(60vh, 520px)
+     with the body scrolling, but the question text (the h2 title in the
+     header — a non-shrinking row) and the option list compete for the
+     same fixed card height: a long question pushes the options and the
+     custom-answer input below the fold. On mobile the title (and the
+     optional MarkdownText detail div) get a small capped, self-scrolling
+     window — same behavior as the option list, no fade, no scrollbar
+     chrome — and the option group absorbs the remaining body height so
+     the answers stay in view and the custom-answer row settles near the
+     bottom. Selectors key off the stable seats only: [data-question-scroll]
+     is the body, the card is its :has() parent section, the title is the
+     header's h2, the option group is the body's role'd direct div
+     (radiogroup / group), and the detail div is the body's only non-role
+     direct div. */
+
+  [data-dsh-mobile] section:has(> [data-question-scroll]) > header h2,
+  [data-dsh-mobile] [data-question-scroll] > div:not([role]) {
+    max-height: min(24vh, 160px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  [data-dsh-mobile] [data-question-scroll] > [role='radiogroup'],
+  [data-dsh-mobile] [data-question-scroll] > [role='group'] {
+    flex: 1 1 auto;
+  }
+
   /* ---------- message tail stats (mobile fit) ----------
 
      The assistant turn's tail clock row — "03:09 · 用时 1分42秒 · 首
