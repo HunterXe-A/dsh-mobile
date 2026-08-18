@@ -38,10 +38,14 @@ const SIDEBAR_COLLAPSE_LABELS = new Set(['收起侧边栏', 'Collapse sidebar'])
 /**
  * Viewport meta content: maximum-scale blocks the iOS focus zoom that would
  * otherwise fight the fixed-height mobile layout; viewport-fit=cover exposes
- * the safe-area insets to env().
+ * the safe-area insets to env(). interactive-widget=resizes-content makes
+ * Android-WebView/Chrome shrink the layout viewport when the OS keyboard
+ * opens, so the sticky composer seat re-anchors to the keyboard top instead
+ * of staying behind it (iOS ignores this property; there the visualViewport
+ * math in #updateKeyboardInset handles the lift).
  */
 const VIEWPORT_CONTENT =
-  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
+  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content'
 
 /**
  * The AppFrame keeps at least one of its two data attributes in every state
@@ -485,9 +489,28 @@ export class MobileController implements MobileControllerHandle {
     const html = this.#html
     if (html === null) return
     const vv = window.visualViewport
-    const inset = vv !== null && vv.height < window.innerHeight
-      ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      : 0
+    // Adaptive inset: pad only the composer seat's ACTUAL deficit below the
+    // visual viewport bottom, never the full keyboard height. At the old
+    // formula (innerHeight - vv.height - vv.offsetTop) the assumption was
+    // "the sticky seat stays at the layout bottom behind the keyboard", and
+    // the full-keyboard padding lifted the card up from behind it. Browsers
+    // that ALREADY keep the sticky seat above the keyboard (iOS Safari
+    // pushes position:fixed/sticky bottom bars up; Android with
+    // interactive-widget=resizes-content re-anchors the layout) then got
+    // that full-height padding on TOP of the browser's own lift — the card
+    // ended up above the keyboard with a blank gap under it. Measuring the
+    // seat's real bottom vs. the visual viewport bottom yields ~0 on those
+    // platforms (no double lift, no gap) and exactly the keyboard height
+    // where the seat is still stuck behind the keyboard.
+    let inset = 0
+    if (vv !== null && vv.height < window.innerHeight) {
+      const seat = document.querySelector('[data-composer-seat]')
+      const seatBottom = seat !== null
+        ? seat.getBoundingClientRect().bottom + window.scrollY
+        : window.innerHeight
+      const vvBottom = vv.offsetTop + vv.height
+      inset = Math.max(0, seatBottom - vvBottom)
+    }
     html.style.setProperty('--dshm-keyboard-inset', `${inset}px`)
   }
 

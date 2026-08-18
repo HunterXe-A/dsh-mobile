@@ -87,15 +87,19 @@
    `100%` resolves against the body content box in BOTH cases: with the host
    padding it is the remaining height; in a plain PWA body itself is 100dvh,
    so the root fills the viewport the same way. Browsers without dvh get the
-   same 100%/100vh pairing from the fallback below. */
+   same 100%/100vh pairing from the fallback below. The 100vh fallback must
+   come FIRST and the @supports(100dvh) override AFTER: both rules share the
+   same specificity, so the cascade picks the later one — if the dvh block
+   precedes the fallback, the fallback always wins and the dynamic viewport
+   fix never applies. */
+[data-dsh-mobile] body {
+  height: 100vh;
+}
+
 @supports (height: 100dvh) {
   [data-dsh-mobile] body {
     height: 100dvh;
   }
-}
-
-[data-dsh-mobile] body {
-  height: 100vh;
 }
 
 [data-dsh-mobile] #root {
@@ -505,6 +509,30 @@
 
   [data-dsh-mobile] [data-turn-tail] > div:last-child > span:last-child::-webkit-scrollbar {
     display: none;
+  }
+
+  /* ---------- composer dock stats bar (mobile fit) ----------
+
+     The composer dock above the input card hosts the conversation's
+     aggregate stats line — "8 轮 · 135 步 | LLM 45m25s · 工具调用
+     71m48s | 首 token 平均 5.6s · 73 tok/s | 缓存命中 91% | 输入
+     13.1M tok · 输出 135K tok" (dsh-client-ui-conversation's StatsLine).
+     Stock it is nowrap + ellipsis + overflow:hidden: on a phone there is
+     no hover tooltip, so everything past the ellipsis is unreachable.
+     Keyed off the stable slot hook (the plugin registers INTO this slot;
+     the slot div is display:contents, so its direct child IS the stats
+     bar). text-overflow:clip is REQUIRED, not cosmetic: with ellipsis
+     some engines truncate inline content AT the ellipsis point during
+     layout, so the overflow is not part of the layout and scrolling can
+     only move the already-visible part — the tail never appears. clip
+     keeps the whole line in layout, so horizontal scroll reaches it. */
+
+  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    text-overflow: clip;
   }
 
   /* ---------- session header (mobile fit) ----------
