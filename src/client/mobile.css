@@ -192,7 +192,15 @@
      the card goes full-bleed — square corners, no shadow, edge to edge —
      so the user reading the conversation never sees a rounded border or
      shadow inside the screen, exactly like OpenCodeUI's full-width mobile
-     chat. The inner layout is untouched; only the card chrome changes. */
+     chat. The inner layout is untouched; only the card chrome changes.
+     The 3D flip is the card's OWN transform (rotateY/scale, never past
+     ±10deg), so `transform-style: preserve-3d` (children have no 3D
+     transforms) and `backface-visibility: hidden` (the back is never
+     shown) are BOTH dropped: keeping them forces the card into its own
+     3D/compositing context on some mobile engines, which can clip or
+     fail to paint sticky descendants — the approval ("等待审批") and
+     question cards render in the sticky composer seat (inside this card)
+     and went invisible on phones. */
   [data-dsh-mobile] div[data-sidebar-collapsed] > :nth-child(2),
   [data-dsh-mobile] div[data-details-collapsed] > :nth-child(2) {
     border: none;
@@ -204,8 +212,6 @@
       rotateY(var(--dshm-rotate, 0deg))
       scale(var(--dshm-scale, 1));
     transform-origin: var(--dshm-origin-x, 50% 50%);
-    transform-style: preserve-3d;
-    backface-visibility: hidden;
     will-change: transform;
   }
 
