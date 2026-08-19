@@ -104,6 +104,50 @@ const MODEL_LABEL_SELECTOR =
 const MARQUEE_GAP_PX = 32
 
 /**
+ * The stock chat view shows a shimmering "Deep diving..." turn-status label
+ * while a turn is running. The controller rewrites it to the actual task:
+ * the model thinking with no tool in flight (思考中), an in-flight file/web
+ * read or search (读取中), a file write/edit (写入中), and any other tool
+ * execution (执行中). The status element is the only role=status with
+ * aria-live=polite in the conversation scroll area. Tool names follow the
+ * wire tool names (dsh-tool-* registrations); bash/pwsh rows carry no
+ * data-tool, so data-sample="bash" is matched separately.
+ */
+const TASK_STATUS_SELECTOR = '[role="status"][aria-live="polite"]'
+const TASK_LABEL_THINKING = '思考中'
+const TASK_LABEL_READING = '读取中'
+const TASK_LABEL_WRITING = '写入中'
+const TASK_LABEL_EXECUTING = '执行中'
+const TASK_RUNNING_TOOL_SELECTOR =
+  '[data-tool][data-state="running"], [data-sample="bash"][data-state="running"]'
+/** Wire tool names whose in-flight call is a read/search task. */
+const TASK_READ_TOOLS = new Set([
+  'read',
+  'read_image',
+  'web_fetch',
+  'web_search',
+  'glob',
+  'grep',
+  'cordis_package_inspect',
+  'cordis_runtime_inspect',
+  'cordis_inspect_list',
+  'cordis_inspect_query',
+  'cordis_inspect_self',
+  'get_goal',
+  'job_list',
+  'job_output',
+])
+/** Wire tool names whose in-flight call is a write/edit task. */
+const TASK_WRITE_TOOLS = new Set([
+  'write',
+  'edit',
+  'todo_write',
+  'create_goal',
+  'update_goal',
+  'str_replace_editor',
+])
+
+/**
  * The pager's chat-page snap position: the rendered width of the sidebar
  * page column (the always-open card). Falls back to the frame's own width
  * while the layout has not settled (offsetWidth is 0 before first layout).
@@ -143,6 +187,9 @@ export class MobileController implements MobileControllerHandle {
   #marqueeLabel: HTMLElement | null = null
   #marqueeRO: ResizeObserver | null = null
   #marqueeFrame: number | null = null
+  #taskStatusFrame: number | null = null
+  #taskStatusElement: HTMLElement | null = null
+  #taskStatusOriginal: string | null = null
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
   #keyboardFrame: number | null = null
@@ -218,7 +265,11 @@ export class MobileController implements MobileControllerHandle {
         this.#ensureFrameObserver()
         this.#ensureConversationActivityObserver()
       })
-      this.#rootObserver.observe(root, { childList: true })
+      // subtree: the session view is mounted deep inside #root (the start
+      // screen and an opened session swap the conversation scroll body), so
+      // a top-level childList watch alone would miss the remount and leave
+      // the activity/status observers attached to a detached node.
+      this.#rootObserver.observe(root, { childList: true, subtree: true })
       // The composer mounts/unmounts with the session skeleton and the
       // model name swaps in place: any subtree change can move the label's
       // overflow state, so re-measure on every mutation (rAF-throttled —
@@ -283,6 +334,15 @@ export class MobileController implements MobileControllerHandle {
       }
     }
     this.#marqueeLabel = null
+    // Return the rewritten turn-status label to its stock text.
+    if (this.#taskStatusElement !== null) {
+      const first = this.#taskStatusElement.firstChild
+      if (first !== null && first.nodeType === Node.TEXT_NODE && this.#taskStatusOriginal !== null && first.nodeValue !== this.#taskStatusOriginal) {
+        first.nodeValue = this.#taskStatusOriginal
+      }
+      this.#taskStatusElement = null
+      this.#taskStatusOriginal = null
+    }
     this.#mql?.removeEventListener('change', this.#onBreakpointChange)
     this.#mql = null
     window.removeEventListener('resize', this.#onWindowResize)
@@ -290,8 +350,8 @@ export class MobileController implements MobileControllerHandle {
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#foregroundTimer, this.#marqueeFrame]) {
-      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#foregroundTimer, this.#marqueeFrame, this.#taskStatusFrame]) {
+      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#keyboardFrame = null
     this.#mountFrame = null
@@ -299,6 +359,7 @@ export class MobileController implements MobileControllerHandle {
     this.#settleTimer = null
     this.#foregroundTimer = null
     this.#marqueeFrame = null
+    this.#taskStatusFrame = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
     if (this.#viewportMeta !== null) {
@@ -569,13 +630,17 @@ export class MobileController implements MobileControllerHandle {
     this.#conversationTarget = target
     this.#conversationObserver = new MutationObserver(() => {
       this.#lastActivityAt = Date.now()
+      this.#requestTaskStatusSync()
     })
     this.#lastActivityAt = Date.now()
     this.#conversationObserver.observe(target, {
       childList: true,
       subtree: true,
       characterData: true,
+      attributes: true,
+      attributeFilter: ['data-state', 'data-tool', 'data-sample'],
     })
+    this.#syncTaskStatus()
   }
 
   /** Crossing the breakpoint: entering mobile re-expands the sidebar and
@@ -815,5 +880,54 @@ export class MobileController implements MobileControllerHandle {
         if (original !== null) label.append(original)
       }
     }
+  }
+
+  /** The concrete task label for the newest running tool row (or 思考中 while
+   *  the model is generating with no tool in flight). */
+  readonly #currentTaskLabel = (target: Element): string => {
+    const rows = target.querySelectorAll(TASK_RUNNING_TOOL_SELECTOR)
+    const row = rows[rows.length - 1] ?? null
+    if (row === null) return TASK_LABEL_THINKING
+    if (row.hasAttribute('data-sample')) return TASK_LABEL_EXECUTING
+    const tool = row.getAttribute('data-tool') ?? ''
+    if (TASK_READ_TOOLS.has(tool)) return TASK_LABEL_READING
+    if (TASK_WRITE_TOOLS.has(tool)) return TASK_LABEL_WRITING
+    return TASK_LABEL_EXECUTING
+  }
+
+  /** Coalesce task-status syncs to one per frame (mutation streams can fire
+   *  every frame while tokens stream). */
+  readonly #requestTaskStatusSync = (): void => {
+    if (this.#taskStatusFrame !== null) return
+    this.#taskStatusFrame = requestAnimationFrame(() => {
+      this.#taskStatusFrame = null
+      this.#syncTaskStatus()
+    })
+  }
+
+  /** Rewrite the stock "Deep diving..." turn-status label to the actual task
+   *  (思考中/读取中/写入中/执行中). React re-renders the element every second
+   *  (its elapsed clock) but leaves the constant text child alone, so a
+   *  direct nodeValue write survives; the observer re-syncs whenever the
+   *  conversation mutates (new tool rows, data-state flips, remounts). The
+   *  original text is recorded for dispose(). */
+  readonly #syncTaskStatus = (): void => {
+    const target = this.#conversationTarget
+    if (target === null) return
+    const status = target.querySelector<HTMLElement>(TASK_STATUS_SELECTOR)
+    if (status === null) {
+      this.#taskStatusElement = null
+      this.#taskStatusOriginal = null
+      return
+    }
+    if (status !== this.#taskStatusElement) {
+      this.#taskStatusElement = status
+      const first = status.firstChild
+      this.#taskStatusOriginal = first !== null && first.nodeType === Node.TEXT_NODE ? first.nodeValue : null
+    }
+    const first = status.firstChild
+    if (first === null || first.nodeType !== Node.TEXT_NODE) return
+    const label = this.#currentTaskLabel(target)
+    if (first.nodeValue !== label) first.nodeValue = label
   }
 }
