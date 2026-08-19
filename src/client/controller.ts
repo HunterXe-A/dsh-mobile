@@ -212,6 +212,11 @@ export class MobileController implements MobileControllerHandle {
   #taskStatusDotTimer: number | null = null
   #taskStatusDotCount = 0
   #taskCompacting = false
+  /** The floating "compacting" pill (fixed toast), present only while the
+   *  live compaction flag is on and NO running /compact card supplies the
+   *  DOM — the stock chat renders nothing during an automatic compaction,
+   *  so this is the only visible cue (text + animated dots). */
+  #compactingIndicator: HTMLDivElement | null = null
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
   #keyboardFrame: number | null = null
@@ -248,8 +253,11 @@ export class MobileController implements MobileControllerHandle {
    *  when a compaction lifecycle event lands (compaction/start → true;
    *  compaction/end → false). Ranks above every tool label in the status. */
   setTaskCompacting(active: boolean): void {
-    if (this.#taskCompacting === active) return
+    if (this.#disposed || this.#taskCompacting === active) return
     this.#taskCompacting = active
+    // Immediate: the pill must exist/ vanish with the flag, not a frame
+    // later (the probe is the only authority on automatic compaction).
+    this.#syncCompactingIndicator()
     this.#requestTaskStatusSync()
   }
 
@@ -379,6 +387,10 @@ export class MobileController implements MobileControllerHandle {
       this.#taskStatusDotTimer = null
     }
     this.#taskStatusDotCount = 0
+    if (this.#compactingIndicator !== null) {
+      this.#compactingIndicator.remove()
+      this.#compactingIndicator = null
+    }
     this.#mql?.removeEventListener('change', this.#onBreakpointChange)
     this.#mql = null
     window.removeEventListener('resize', this.#onWindowResize)
@@ -984,6 +996,66 @@ export class MobileController implements MobileControllerHandle {
     })
   }
 
+  /** The automatic-compaction visual: the stock chat renders nothing while
+   *  a compaction runs (no card, no checkpoint), and the turn-status
+   *  element may be absent too (a /compact-only or background run) — so
+   *  while the probe flag is on and no running /compact card supplies the
+   *  DOM, a fixed toast under the composer speaks the cute label with the
+   *  shared animated dots. Removed on compaction end (or dispose); a
+   *  running /compact card suppresses it (the card is the DOM there). The
+   *  pill is self-contained chrome (inline styles) so it works even before
+   *  the conversation body exists and is testable without the stylesheet. */
+  readonly #syncCompactingIndicator = (): void => {
+    const target = this.#conversationTarget
+    const cardVisible = target !== null && this.#findRunningCompactingCard(target) !== null
+    const show = this.#taskCompacting && !cardVisible
+    let pill = this.#compactingIndicator
+    if (!show) {
+      if (pill !== null) {
+        pill.remove()
+        this.#compactingIndicator = null
+      }
+      return
+    }
+    if (pill === null) {
+      pill = document.createElement('div')
+      pill.dataset.dshmIndicator = 'compacting'
+      pill.setAttribute('aria-live', 'polite')
+      pill.append(document.createTextNode(TASK_LABEL_COMPACTING))
+      Object.assign(pill.style, {
+        position: 'fixed',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        bottom: 'calc(env(safe-area-inset-bottom, 0px) + 96px)',
+        zIndex: '2147483000',
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        maxWidth: 'calc(100vw - 32px)',
+        padding: '10px 16px',
+        borderRadius: '999px',
+        background: 'rgba(2, 6, 23, 0.86)',
+        color: '#fff',
+        fontSize: '13px',
+        fontWeight: '600',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.28)',
+      })
+      document.body.append(pill)
+      this.#compactingIndicator = pill
+    }
+    // The dots keep ticking on the pill even with no turn-status element
+    // and no card (the pure automatic-compaction run).
+    this.#ensureTaskStatusDots()
+    const first = pill.firstChild
+    if (first !== null && first.nodeType === Node.TEXT_NODE) {
+      const next = `${TASK_LABEL_COMPACTING}${'.'.repeat(this.#taskStatusDotCount)}`
+      if (first.nodeValue !== next) first.nodeValue = next
+    }
+  }
+
   /** Rewrite the stock "Deep diving..." turn-status label to the actual task
    *  (思考中/读取中/写入中/执行中). React re-renders the element every second
    *  (its elapsed clock) but leaves the constant text child alone, so a
@@ -991,6 +1063,10 @@ export class MobileController implements MobileControllerHandle {
    *  conversation mutates (new tool rows, data-state flips, remounts). The
    *  original text is recorded for dispose(). */
   readonly #syncTaskStatus = (): void => {
+    // The compaction pill is independent of the conversation target (the
+    // stock chat renders nothing during an automatic compaction), so sync
+    // it first — its dots tick even when no target exists at all.
+    this.#syncCompactingIndicator()
     const target = this.#conversationTarget
     if (target === null) return
     // A running /compact card carries its own stock "正在压缩…" summary —
@@ -1030,6 +1106,7 @@ export class MobileController implements MobileControllerHandle {
       const target = this.#conversationTarget
       const alive = (status !== null && status.isConnected)
         || (target !== null && this.#findRunningCompactingCard(target) !== null)
+        || this.#compactingIndicator !== null
       if (!alive) {
         const timer = this.#taskStatusDotTimer
         if (timer !== null) window.clearInterval(timer)

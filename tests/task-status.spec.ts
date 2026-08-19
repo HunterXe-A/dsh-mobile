@@ -343,4 +343,98 @@ describe('MobileController turn-status rewrite', () => {
     await nextFrame()
     expect(card.lastElementChild?.textContent).toBe('已压缩 12 条历史记录')
   })
+
+  it('shows a floating 小鲸鱼在打包记忆呢 pill during automatic compaction (no DOM card, no status)', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    document.body.append(scroll) // no status element, no /compact card — a pure automatic run
+    const controller = makeController({ toggleSidebar: vi.fn() })
+    controller.mount()
+    await nextFrame()
+    expect(document.querySelector('[data-dshm-indicator="compacting"]')).toBeNull()
+    controller.setTaskCompacting(true) // compaction/start landed
+    const pill = document.querySelector('[data-dshm-indicator="compacting"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toBe('小鲸鱼在打包记忆呢') // 0 dots
+    expect(pill?.getAttribute('aria-live')).toBe('polite')
+    expect(document.body.contains(pill)).toBe(true) // attached to the page, not the conversation
+    controller.setTaskCompacting(false) // compaction/end landed
+    expect(document.querySelector('[data-dshm-indicator="compacting"]')).toBeNull()
+  })
+
+  it('animates the pill dots while the automatic compaction runs', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    document.body.append(scroll)
+    const controller = makeController({ toggleSidebar: vi.fn() })
+    controller.mount()
+    controller.setTaskCompacting(true)
+    const pill = document.querySelector<HTMLElement>('[data-dshm-indicator="compacting"]')!
+    expect(pill.textContent).toBe('小鲸鱼在打包记忆呢')
+    await flushTimers(450)
+    expect(pill.textContent).toBe('小鲸鱼在打包记忆呢.')
+    await flushTimers(400)
+    expect(pill.textContent).toBe('小鲸鱼在打包记忆呢..')
+    await flushTimers(400)
+    expect(pill.textContent).toBe('小鲸鱼在打包记忆呢...')
+    await flushTimers(400)
+    expect(pill.textContent).toBe('小鲸鱼在打包记忆呢') // wraps to 0
+  })
+
+  it('does not show the pill while a running /compact card supplies the DOM', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    makeCompactingCard(scroll)
+    document.body.append(scroll)
+    const controller = makeController({ toggleSidebar: vi.fn() })
+    controller.mount()
+    await nextFrame()
+    expect(cardSummary(scroll)).toBe('小鲸鱼在打包记忆呢') // the card is the surface
+    controller.setTaskCompacting(true) // probe fires for /compact runs too
+    expect(document.querySelector('[data-dshm-indicator="compacting"]')).toBeNull()
+  })
+
+  it('removes the pill when a manual /compact card appears mid-compaction (flag stays on)', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    document.body.append(scroll)
+    const controller = makeController({ toggleSidebar: vi.fn() })
+    controller.mount()
+    controller.setTaskCompacting(true)
+    expect(document.querySelector('[data-dshm-indicator="compacting"]')).not.toBeNull()
+    makeCompactingCard(scroll) // React renders the manual card mid-run
+    await nextFrame()
+    expect(document.querySelector('[data-dshm-indicator="compacting"]')).toBeNull()
+    expect(cardSummary(scroll)).toBe('小鲸鱼在打包记忆呢')
+  })
+
+  it('dispose() removes the pill and restores the room', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    document.body.append(scroll)
+    const controller = makeController({ toggleSidebar: vi.fn() })
+    controller.mount()
+    controller.setTaskCompacting(true)
+    expect(document.querySelector('[data-dshm-indicator="compacting"]')).not.toBeNull()
+    controller.dispose()
+    expect(document.querySelector('[data-dshm-indicator="compacting"]')).toBeNull()
+    expect(controller.setTaskCompacting(false)).toBeUndefined() // no crash after dispose
+  })
 })
+
+/** The summary span text of the running compact card in the scroll body (the
+ *  card's last child — the title span "compact" is its first child). */
+function cardSummary(scroll: HTMLElement): string | null {
+  const card = scroll.querySelector('[data-variant="others"][data-state="running"]')
+  return card?.lastElementChild?.textContent ?? null
+}
