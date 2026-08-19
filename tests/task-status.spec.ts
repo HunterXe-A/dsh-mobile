@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** Turn-status rewrite: the stock "Deep diving..." label becomes the actual
- *  task (思考中/读取中/写入中/执行中), keyed off the newest running tool row,
+ *  task (小鲸鱼在想事情呢/小鲸鱼在翻资料呢/小鲸鱼在写笔记呢/小鲸鱼在干活呢), keyed off the newest running tool row,
  *  and the rewrite survives React-style text re-renders. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileController, type MobileControllerOptions } from '../src/client/controller.ts'
@@ -79,14 +79,18 @@ function makeBashRow(scroll: HTMLElement): HTMLElement {
   return row
 }
 
-/** A running /compact command card (GenericCommandCard chrome). */
-function makeCompactingCard(scroll: HTMLElement): HTMLElement {
+/** A running /compact command card (GenericCommandCard chrome): the title
+ *  span "compact" plus the stock running summary ("正在压缩…"). */
+function makeCompactingCard(scroll: HTMLElement, summary = '正在压缩…'): HTMLElement {
   const card = document.createElement('div')
   card.setAttribute('data-variant', 'others')
   card.setAttribute('data-state', 'running')
   const title = document.createElement('span')
   title.textContent = 'compact'
   card.append(title)
+  const summarySpan = document.createElement('span')
+  summarySpan.textContent = summary
+  card.append(summarySpan)
   scroll.append(card)
   return card
 }
@@ -121,56 +125,56 @@ async function flushTimers(ms: number): Promise<void> {
 }
 
 describe('MobileController turn-status rewrite', () => {
-  it('rewrites "Deep diving..." to 思考中 while no tool is running', async () => {
+  it('rewrites "Deep diving..." to 小鲸鱼在想事情呢 while no tool is running', async () => {
     stubMatchMedia(false)
     makeFrame()
     const { status } = makeConversation()
     makeController({ toggleSidebar: vi.fn() }).mount()
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('思考中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢')
   })
 
-  it('shows 读取中 while a read/search tool is running', async () => {
+  it('shows 小鲸鱼在翻资料呢 while a read/search tool is running', async () => {
     stubMatchMedia(false)
     makeFrame()
     const { scroll, status } = makeConversation()
     makeController({ toggleSidebar: vi.fn() }).mount()
     makeToolRow(scroll, 'read')
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('读取中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在翻资料呢')
   })
 
-  it('shows 写入中 while a write/edit tool is running', async () => {
+  it('shows 小鲸鱼在写笔记呢 while a write/edit tool is running', async () => {
     stubMatchMedia(false)
     makeFrame()
     const { scroll, status } = makeConversation()
     makeController({ toggleSidebar: vi.fn() }).mount()
     makeToolRow(scroll, 'edit')
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('写入中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在写笔记呢')
   })
 
-  it('shows 执行中 for bash rows and unknown tools', async () => {
+  it('shows 小鲸鱼在干活呢 for bash rows and unknown tools', async () => {
     stubMatchMedia(false)
     makeFrame()
     const { scroll, status } = makeConversation()
     makeController({ toggleSidebar: vi.fn() }).mount()
     makeBashRow(scroll)
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('执行中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在干活呢')
   })
 
-  it('falls back to 思考中 when the running tool settles', async () => {
+  it('falls back to 小鲸鱼在想事情呢 when the running tool settles', async () => {
     stubMatchMedia(false)
     makeFrame()
     const { scroll, status } = makeConversation()
     makeController({ toggleSidebar: vi.fn() }).mount()
     const row = makeToolRow(scroll, 'read')
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('读取中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在翻资料呢')
     row.setAttribute('data-state', 'ok')
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('思考中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢')
   })
 
   it('keeps the newest running tool when several run in parallel', async () => {
@@ -181,7 +185,7 @@ describe('MobileController turn-status rewrite', () => {
     makeToolRow(scroll, 'read')
     makeToolRow(scroll, 'write')
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('写入中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在写笔记呢')
   })
 
   it('survives a React-style text re-render (same constant string)', async () => {
@@ -190,13 +194,13 @@ describe('MobileController turn-status rewrite', () => {
     const { status } = makeConversation()
     makeController({ toggleSidebar: vi.fn() }).mount()
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('思考中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢')
     // React reconciles the same constant text child without touching it —
     // simulate a re-render that would only recreate the node if the diff
     // decided to; a direct nodeValue write must persist.
     status.firstChild!.nodeValue = 'Deep diving...'
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('思考中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢')
   })
 
   it('dispose() restores the original stock text', async () => {
@@ -207,7 +211,7 @@ describe('MobileController turn-status rewrite', () => {
     controller.mount()
     makeBashRow(scroll)
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('执行中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在干活呢')
     controller.dispose()
     expect(status.firstChild?.nodeValue).toBe('Deep diving...')
   })
@@ -218,18 +222,18 @@ describe('MobileController turn-status rewrite', () => {
     const { status } = makeConversation()
     makeController({ toggleSidebar: vi.fn() }).mount()
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('思考中') // 0 dots
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢') // 0 dots
     await flushTimers(450) // first interval step
-    expect(status.firstChild?.nodeValue).toBe('思考中.')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢.')
     await flushTimers(400)
-    expect(status.firstChild?.nodeValue).toBe('思考中..')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢..')
     await flushTimers(400)
-    expect(status.firstChild?.nodeValue).toBe('思考中...')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢...')
     await flushTimers(400)
-    expect(status.firstChild?.nodeValue).toBe('思考中') // wraps to 0
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在想事情呢') // wraps to 0
   })
 
-  it('shows 压缩中 while a /compact card is running, beating running tools', async () => {
+  it('shows 小鲸鱼在打包记忆呢 while a /compact card is running, beating running tools', async () => {
     stubMatchMedia(false)
     makeFrame()
     const { scroll, status } = makeConversation()
@@ -237,13 +241,13 @@ describe('MobileController turn-status rewrite', () => {
     makeBashRow(scroll)
     const card = makeCompactingCard(scroll)
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('压缩中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在打包记忆呢')
     card.setAttribute('data-state', 'ok')
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('执行中') // bash still running
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在干活呢') // bash still running
   })
 
-  it('shows 压缩中 from the live compaction event flag (no DOM card needed)', async () => {
+  it('shows 小鲸鱼在打包记忆呢 from the live compaction event flag (no DOM card needed)', async () => {
     stubMatchMedia(false)
     makeFrame()
     const { scroll, status } = makeConversation()
@@ -251,12 +255,92 @@ describe('MobileController turn-status rewrite', () => {
     controller.mount()
     makeBashRow(scroll)
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('执行中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在干活呢')
     controller.setTaskCompacting(true) // compaction/start landed
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('压缩中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在打包记忆呢')
     controller.setTaskCompacting(false) // compaction/end landed
     await nextFrame()
-    expect(status.firstChild?.nodeValue).toBe('执行中')
+    expect(status.firstChild?.nodeValue).toBe('小鲸鱼在干活呢')
+  })
+
+  it('rewrites the /compact card summary 正在压缩… → 小鲸鱼在打包记忆呢, even with no turn-status element', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    const card = makeCompactingCard(scroll)
+    document.body.append(scroll)
+    makeController({ toggleSidebar: vi.fn() }).mount()
+    await nextFrame()
+    expect(card.lastElementChild?.textContent).toBe('小鲸鱼在打包记忆呢')
+    expect(card.firstElementChild?.textContent).toBe('compact') // title untouched
+  })
+
+  it('animates the dots on the /compact card summary while no turn status exists', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    const card = makeCompactingCard(scroll)
+    document.body.append(scroll)
+    makeController({ toggleSidebar: vi.fn() }).mount()
+    await nextFrame()
+    expect(card.lastElementChild?.textContent).toBe('小鲸鱼在打包记忆呢') // 0 dots
+    await flushTimers(450)
+    expect(card.lastElementChild?.textContent).toBe('小鲸鱼在打包记忆呢.')
+    await flushTimers(400)
+    expect(card.lastElementChild?.textContent).toBe('小鲸鱼在打包记忆呢..')
+  })
+
+  it('rewrites the en stock summary "Compacting context…" too', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    const card = makeCompactingCard(scroll, 'Compacting context…')
+    document.body.append(scroll)
+    makeController({ toggleSidebar: vi.fn() }).mount()
+    await nextFrame()
+    expect(card.lastElementChild?.textContent).toBe('小鲸鱼在打包记忆呢')
+  })
+
+  it('leaves a running non-compact command card summary untouched', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    const card = document.createElement('div')
+    card.setAttribute('data-variant', 'others')
+    card.setAttribute('data-state', 'running')
+    const title = document.createElement('span')
+    title.textContent = 'clear'
+    card.append(title)
+    const summary = document.createElement('span')
+    summary.textContent = '正在处理…'
+    card.append(summary)
+    scroll.append(card)
+    document.body.append(scroll)
+    makeController({ toggleSidebar: vi.fn() }).mount()
+    await nextFrame()
+    expect(card.lastElementChild?.textContent).toBe('正在处理…')
+  })
+
+  it('stops the card-summary dots once the /compact card settles (no status element)', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const scroll = document.createElement('div')
+    scroll.setAttribute('data-conversation-scroll', '')
+    const card = makeCompactingCard(scroll)
+    document.body.append(scroll)
+    makeController({ toggleSidebar: vi.fn() }).mount()
+    await nextFrame()
+    expect(card.lastElementChild?.textContent).toBe('小鲸鱼在打包记忆呢')
+    card.setAttribute('data-state', 'ok') // compaction completes, React re-renders
+    // The rewrite only targets running cards; after the state flip the
+    // observer re-syncs and leaves the (now stock, settled) card alone.
+    card.lastElementChild!.textContent = '已压缩 12 条历史记录' // React replaced the node
+    await nextFrame()
+    expect(card.lastElementChild?.textContent).toBe('已压缩 12 条历史记录')
   })
 })

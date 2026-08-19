@@ -115,19 +115,25 @@ const MARQUEE_GAP_PX = 32
  * (automatic or /compact) wins over every tool label (压缩中): the live flag
  * is driven by the conversationEvents compaction probe (registerCompactionProbe
  * in index.ts), with the running /compact card in the DOM as a fallback while
- * the event stream is not connected.
+ * the event stream is not connected. The card's OWN stock summary (正在压
+ * 缩…) is rewritten to the same cute label, animating with the same trailing
+ * dots even when no turn-status element exists (a /compact-only run).
  */
 const TASK_STATUS_SELECTOR = '[role="status"][aria-live="polite"]'
-const TASK_LABEL_THINKING = '思考中'
-const TASK_LABEL_READING = '读取中'
-const TASK_LABEL_WRITING = '写入中'
-const TASK_LABEL_EXECUTING = '执行中'
-const TASK_LABEL_COMPACTING = '压缩中'
+const TASK_LABEL_THINKING = '小鲸鱼在想事情呢'
+const TASK_LABEL_READING = '小鲸鱼在翻资料呢'
+const TASK_LABEL_WRITING = '小鲸鱼在写笔记呢'
+const TASK_LABEL_EXECUTING = '小鲸鱼在干活呢'
+const TASK_LABEL_COMPACTING = '小鲸鱼在打包记忆呢'
 const TASK_RUNNING_TOOL_SELECTOR =
   '[data-tool][data-state="running"], [data-sample="bash"][data-state="running"]'
 /** A running /compact command card (GenericCommandCard, data-variant=others,
  *  data-state=running, title "compact") — the manual compaction in flight. */
 const TASK_COMPACTING_SELECTOR = '[data-variant="others"][data-state="running"]'
+/** Stock summaries a running /compact card renders while compaction is in
+ *  flight (message.compaction.running in the zh/en locales); a text node
+ *  starting with one of these gets rewritten to the cute label. */
+const TASK_COMPACT_STOCK_PREFIXES = ['正在压缩', 'Compacting context']
 /** Wire tool names whose in-flight call is a read/search task. */
 const TASK_READ_TOOLS = new Set([
   'read',
@@ -912,21 +918,52 @@ export class MobileController implements MobileControllerHandle {
     }
   }
 
+  /** The first running /compact card in the target, or null. The card title
+   *  is the command name ("compact"); the summary ("正在压缩…") carries it
+   *  too, so the guard is on textContent — a future rename of the title
+   *  still matches the summary. */
+  readonly #findRunningCompactingCard = (target: Element): Element | null => {
+    const cards = target.querySelectorAll(TASK_COMPACTING_SELECTOR)
+    for (const card of cards) {
+      if (card.textContent !== null && card.textContent.includes('compact')) {
+        return card
+      }
+    }
+    return null
+  }
+
+  /** Rewrite the stock summary text of every running /compact card (zh
+   *  "正在压缩…" / en "Compacting context…") to the cute label, sharing the
+   *  same trailing-dot counter as the turn-status label. Idempotent — the
+   *  observer re-syncs on every mutation; React replaces the text itself
+   *  when the card settles and re-renders. */
+  readonly #rewriteCompactingCards = (target: Element): void => {
+    const cards = target.querySelectorAll(TASK_COMPACTING_SELECTOR)
+    for (const card of cards) {
+      if (card.textContent === null || !card.textContent.includes('compact')) continue
+      const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT)
+      let node = walker.nextNode()
+      while (node !== null) {
+        const value = node.nodeValue ?? ''
+        // Stock summary (zh/en) OR the controller's own label already
+        // applied (so the animated dots keep updating on later syncs).
+        const rewritable = TASK_COMPACT_STOCK_PREFIXES.some((prefix) => value.startsWith(prefix))
+          || value.startsWith(TASK_LABEL_COMPACTING)
+        if (rewritable) {
+          node.nodeValue = `${TASK_LABEL_COMPACTING}${'.'.repeat(this.#taskStatusDotCount)}`
+        }
+        node = walker.nextNode()
+      }
+    }
+  }
+
   /** The concrete task label for the newest running tool row (or 思考中 while
    *  the model is generating with no tool in flight); a live compaction event
    *  flag outranks everything (压缩中), with the running /compact card in the
    *  DOM as a fallback. */
   readonly #currentTaskLabel = (target: Element): string => {
     if (this.#taskCompacting) return TASK_LABEL_COMPACTING
-    const cards = target.querySelectorAll(TASK_COMPACTING_SELECTOR)
-    for (const card of cards) {
-      // The card title is the command name ("compact"); the summary ("正在压
-      // 缩…") carries it too. Guard on textContent so a future rename of the
-      // title still matches the summary.
-      if (card.textContent !== null && card.textContent.includes('compact')) {
-        return TASK_LABEL_COMPACTING
-      }
-    }
+    if (this.#findRunningCompactingCard(target) !== null) return TASK_LABEL_COMPACTING
     const rows = target.querySelectorAll(TASK_RUNNING_TOOL_SELECTOR)
     const row = rows[rows.length - 1] ?? null
     if (row === null) return TASK_LABEL_THINKING
@@ -956,10 +993,17 @@ export class MobileController implements MobileControllerHandle {
   readonly #syncTaskStatus = (): void => {
     const target = this.#conversationTarget
     if (target === null) return
+    // A running /compact card carries its own stock "正在压缩…" summary —
+    // rewrite it to the cute label (animated with the same dots) so the
+    // whole card speaks whale, not just the turn-status label.
+    this.#rewriteCompactingCards(target)
     const status = target.querySelector<HTMLElement>(TASK_STATUS_SELECTOR)
     if (status === null) {
       this.#taskStatusElement = null
       this.#taskStatusOriginal = null
+      // No turn-status element (a /compact-only run has no live turn): the
+      // dots keep animating on the compact card summary instead.
+      this.#ensureTaskStatusDots()
       return
     }
     if (status !== this.#taskStatusElement) {
@@ -976,13 +1020,17 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Drive the animated trailing dots (0 → 1 → 2 → 3 → 0 → …) after the task
-   *  label while the status element stays mounted; the timer stops itself
-   *  once the element is gone. */
+   *  label while the status element stays mounted — or, when there is no
+   *  status element (a /compact-only run), while a running /compact card is
+   *  in the conversation; the timer stops itself once both are gone. */
   readonly #ensureTaskStatusDots = (): void => {
     if (this.#taskStatusDotTimer !== null) return
     this.#taskStatusDotTimer = window.setInterval(() => {
       const status = this.#taskStatusElement
-      if (status === null || !status.isConnected) {
+      const target = this.#conversationTarget
+      const alive = (status !== null && status.isConnected)
+        || (target !== null && this.#findRunningCompactingCard(target) !== null)
+      if (!alive) {
         const timer = this.#taskStatusDotTimer
         if (timer !== null) window.clearInterval(timer)
         this.#taskStatusDotTimer = null
