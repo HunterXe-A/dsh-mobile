@@ -351,30 +351,102 @@ export class MobileController implements MobileControllerHandle {
     }, FOREGROUND_CHECK_DELAY_MS)
   }
 
-  /** The recovery judge — everything must line up or nothing happens. */
+  /** The recovery judge — everything must line up or nothing happens.
+   *  Two failure modes are repaired:
+   *  1. Suspended stream: a running session with no DOM activity for
+   *     FOREGROUND_QUIET_MS is judged dead (frames emitted while hidden
+   *     were lost and the connection layer never reconnects a suspended
+   *     stream). Reload backfills history.
+   *  2. Lost approval panel: on reconnect the server replays pending
+   *     approvals on mux open, but the client's resync() clears its
+   *     pending map AFTER those replay frames arrive — the panel is
+   *     rendered (flash) then dropped, and no second replay ever comes.
+   *     If history still shows an unanswered approval/asked while no
+   *     panel is mounted, the panel was lost: reload replays it.
+   */
   readonly #checkForegroundRecovery = (): void => {
     // Phone layout only; the desktop shell has no suspended-stream problem.
     if (!(this.#mql?.matches ?? false)) return
     // One recovery per page load (sessionStorage survives the reload, so
     // the freshly booted page never immediately reloads itself again).
     if (sessionStorage.getItem(RECOVERY_STAMP_KEY) === '1') return
-    // A running session is a precondition: idle sessions have no stream to
-    // restore, and mutating around a session the user isn't watching is
-    // pointless. The running mark is the SELECTED sidebar row's activity
-    // svg (data-state="ongoing" — set by the host list feed). Only the
-    // selected row counts: a background running session elsewhere in the
-    // tree must never trigger a reload while the user is looking at
-    // another session.
-    const selectedRow = document.querySelector('[role="treeitem"][aria-selected="true"]')
-    if (selectedRow === null) return
-    if (selectedRow.querySelector('[data-state="ongoing"]') === null) return
     // Never reload over the user's draft: if the composer holds text or
     // focus, the stream may be fine and we would destroy work.
     if (this.#composerHoldsInput()) return
-    // Silence for FOREGROUND_QUIET_MS while a session is running means the
-    // stream is not delivering (token deltas/status flips mutate the DOM
-    // constantly while it is).
-    if (Date.now() - this.#lastActivityAt < FOREGROUND_QUIET_MS) return
+    void this.#probeAndRecover()
+  }
+
+  /** Async recovery probe: pending-approval lookup and the DOM-clock stream
+   *  check, then the reload decision. Never throws into the UI (fetch
+   *  failures just abort the probe — the stream check below still runs on
+   *  the DOM clock). */
+  readonly #probeAndRecover = async (): Promise<void> => {
+    try {
+      const list = await this.#rpc('session.list', {})
+      const sessions: Array<{ sessionId?: unknown; running?: boolean }> = list?.items ?? []
+      if (sessions.length === 0) return
+      // Approval-loss repair: a running session holding an unanswered
+      // approval whose panel is NOT mounted lost its panel to the reconnect
+      // replay race (mux re-open replays approval/requested, then the
+      // client's resync clears its pending map — the panel flashes and
+      // drops, and no second replay ever comes). Note a session waiting on
+      // approval does NOT show the sidebar ongoing marker, so this check
+      // must not depend on the selected row's data-state. The only way back
+      // is a fresh boot (mux open replays the pending approval again).
+      for (const session of sessions) {
+        if (session.running !== true) continue
+        const sessionId = typeof session.sessionId === 'string' ? session.sessionId : ''
+        if (sessionId === '') continue
+        const history = await this.#rpc('session.history', { sessionId, maxMessages: 200 })
+        const events: Array<{ event?: { type?: string; data?: { id?: string } } }> = history?.events ?? []
+        const decidedIds = new Set(
+          events.filter((e) => e.event?.type === 'approval/decided').map((e) => e.event?.data?.id),
+        )
+        const unanswered = events.some(
+          (e) => e.event?.type === 'approval/asked' && !decidedIds.has(e.event?.data?.id),
+        )
+        if (!unanswered) continue
+        if (document.querySelector('[data-approval-key]') === null) {
+          this.#recoverReload()
+          return
+        }
+        return // panel is mounted — the approval is live, nothing to repair
+      }
+      // Suspended-stream repair: the SELECTED sidebar row's activity svg
+      // (data-state="ongoing") proves the user is watching a running
+      // session. Only the selected row counts: a background running session
+      // elsewhere in the tree must never trigger a reload while the user is
+      // looking at another session. Silence for FOREGROUND_QUIET_MS while
+      // running means the stream is not delivering (token deltas/status
+      // flips mutate the DOM constantly while it is).
+      const selectedRow = document.querySelector('[role="treeitem"][aria-selected="true"]')
+      if (selectedRow === null) return
+      if (selectedRow.querySelector('[data-state="ongoing"]') === null) return
+      if (Date.now() - this.#lastActivityAt < FOREGROUND_QUIET_MS) return
+      this.#recoverReload()
+    } catch {
+      // Probe failed (network hiccup); no repair attempt this time.
+    }
+  }
+
+  /** One-shot RPC against the same-origin harness API (probe only). */
+  readonly #rpc = async (method: string, payload: Record<string, unknown>): Promise<any> => {
+    const res = await fetch(`/api/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'client-request',
+        rpcId: `dshm-probe-${Math.random().toString(36).slice(2)}`,
+        method,
+        payload,
+      }),
+    })
+    const json = (await res.json()) as { result?: { value?: unknown } }
+    return json?.result?.value ?? null
+  }
+
+  /** The actual recovery: stamp the loop guard and reload. */
+  readonly #recoverReload = (): void => {
     try {
       sessionStorage.setItem(RECOVERY_STAMP_KEY, '1')
     } catch {
