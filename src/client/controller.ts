@@ -146,6 +146,9 @@ const TASK_WRITE_TOOLS = new Set([
   'update_goal',
   'str_replace_editor',
 ])
+/** Step interval of the animated trailing dots after the task label
+ *  (思考中 → 思考中. → 思考中.. → 思考中... → 思考中 → …). */
+const TASK_DOTS_STEP_MS = 400
 
 /**
  * The pager's chat-page snap position: the rendered width of the sidebar
@@ -190,6 +193,8 @@ export class MobileController implements MobileControllerHandle {
   #taskStatusFrame: number | null = null
   #taskStatusElement: HTMLElement | null = null
   #taskStatusOriginal: string | null = null
+  #taskStatusDotTimer: number | null = null
+  #taskStatusDotCount = 0
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
   #keyboardFrame: number | null = null
@@ -343,6 +348,11 @@ export class MobileController implements MobileControllerHandle {
       this.#taskStatusElement = null
       this.#taskStatusOriginal = null
     }
+    if (this.#taskStatusDotTimer !== null) {
+      window.clearInterval(this.#taskStatusDotTimer)
+      this.#taskStatusDotTimer = null
+    }
+    this.#taskStatusDotCount = 0
     this.#mql?.removeEventListener('change', this.#onBreakpointChange)
     this.#mql = null
     window.removeEventListener('resize', this.#onWindowResize)
@@ -922,12 +932,33 @@ export class MobileController implements MobileControllerHandle {
     }
     if (status !== this.#taskStatusElement) {
       this.#taskStatusElement = status
+      this.#taskStatusDotCount = 0
       const first = status.firstChild
       this.#taskStatusOriginal = first !== null && first.nodeType === Node.TEXT_NODE ? first.nodeValue : null
     }
+    this.#ensureTaskStatusDots()
     const first = status.firstChild
     if (first === null || first.nodeType !== Node.TEXT_NODE) return
-    const label = this.#currentTaskLabel(target)
+    const label = `${this.#currentTaskLabel(target)}${'.'.repeat(this.#taskStatusDotCount)}`
     if (first.nodeValue !== label) first.nodeValue = label
+  }
+
+  /** Drive the animated trailing dots (0 → 1 → 2 → 3 → 0 → …) after the task
+   *  label while the status element stays mounted; the timer stops itself
+   *  once the element is gone. */
+  readonly #ensureTaskStatusDots = (): void => {
+    if (this.#taskStatusDotTimer !== null) return
+    this.#taskStatusDotTimer = window.setInterval(() => {
+      const status = this.#taskStatusElement
+      if (status === null || !status.isConnected) {
+        const timer = this.#taskStatusDotTimer
+        if (timer !== null) window.clearInterval(timer)
+        this.#taskStatusDotTimer = null
+        this.#taskStatusDotCount = 0
+        return
+      }
+      this.#taskStatusDotCount = (this.#taskStatusDotCount + 1) % 4
+      this.#syncTaskStatus()
+    }, TASK_DOTS_STEP_MS)
   }
 }

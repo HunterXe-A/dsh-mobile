@@ -103,6 +103,11 @@ async function nextFrame(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 
+/** Wait real time so setInterval-driven dot steps can fire. */
+async function flushTimers(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
 describe('MobileController turn-status rewrite', () => {
   it('rewrites "Deep diving..." to 思考中 while no tool is running', async () => {
     stubMatchMedia(false)
@@ -193,5 +198,22 @@ describe('MobileController turn-status rewrite', () => {
     expect(status.firstChild?.nodeValue).toBe('执行中')
     controller.dispose()
     expect(status.firstChild?.nodeValue).toBe('Deep diving...')
+  })
+
+  it('animates the trailing dots 0 → 1 → 2 → 3 → 0 while the turn runs', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const { status } = makeConversation()
+    makeController({ toggleSidebar: vi.fn() }).mount()
+    await nextFrame()
+    expect(status.firstChild?.nodeValue).toBe('思考中') // 0 dots
+    await flushTimers(450) // first interval step
+    expect(status.firstChild?.nodeValue).toBe('思考中.')
+    await flushTimers(400)
+    expect(status.firstChild?.nodeValue).toBe('思考中..')
+    await flushTimers(400)
+    expect(status.firstChild?.nodeValue).toBe('思考中...')
+    await flushTimers(400)
+    expect(status.firstChild?.nodeValue).toBe('思考中') // wraps to 0
   })
 })
