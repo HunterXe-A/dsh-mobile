@@ -118,8 +118,12 @@ const TASK_LABEL_THINKING = '思考中'
 const TASK_LABEL_READING = '读取中'
 const TASK_LABEL_WRITING = '写入中'
 const TASK_LABEL_EXECUTING = '执行中'
+const TASK_LABEL_COMPACTING = '压缩中'
 const TASK_RUNNING_TOOL_SELECTOR =
   '[data-tool][data-state="running"], [data-sample="bash"][data-state="running"]'
+/** A running /compact command card (GenericCommandCard, data-variant=others,
+ *  data-state=running, title "compact") — the manual compaction in flight. */
+const TASK_COMPACTING_SELECTOR = '[data-variant="others"][data-state="running"]'
 /** Wire tool names whose in-flight call is a read/search task. */
 const TASK_READ_TOOLS = new Set([
   'read',
@@ -893,8 +897,18 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** The concrete task label for the newest running tool row (or 思考中 while
-   *  the model is generating with no tool in flight). */
+   *  the model is generating with no tool in flight); a running /compact
+   *  command card wins over every tool (压缩中). */
   readonly #currentTaskLabel = (target: Element): string => {
+    const cards = target.querySelectorAll(TASK_COMPACTING_SELECTOR)
+    for (const card of cards) {
+      // The card title is the command name ("compact"); the summary ("正在压
+      // 缩…") carries it too. Guard on textContent so a future rename of the
+      // title still matches the summary.
+      if (card.textContent !== null && card.textContent.includes('compact')) {
+        return TASK_LABEL_COMPACTING
+      }
+    }
     const rows = target.querySelectorAll(TASK_RUNNING_TOOL_SELECTOR)
     const row = rows[rows.length - 1] ?? null
     if (row === null) return TASK_LABEL_THINKING

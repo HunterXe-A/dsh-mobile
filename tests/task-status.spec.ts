@@ -79,6 +79,18 @@ function makeBashRow(scroll: HTMLElement): HTMLElement {
   return row
 }
 
+/** A running /compact command card (GenericCommandCard chrome). */
+function makeCompactingCard(scroll: HTMLElement): HTMLElement {
+  const card = document.createElement('div')
+  card.setAttribute('data-variant', 'others')
+  card.setAttribute('data-state', 'running')
+  const title = document.createElement('span')
+  title.textContent = 'compact'
+  card.append(title)
+  scroll.append(card)
+  return card
+}
+
 const liveControllers: MobileController[] = []
 function makeController(options: MobileControllerOptions): MobileController {
   const controller = new MobileController(options)
@@ -215,5 +227,19 @@ describe('MobileController turn-status rewrite', () => {
     expect(status.firstChild?.nodeValue).toBe('思考中...')
     await flushTimers(400)
     expect(status.firstChild?.nodeValue).toBe('思考中') // wraps to 0
+  })
+
+  it('shows 压缩中 while a /compact card is running, beating running tools', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const { scroll, status } = makeConversation()
+    makeController({ toggleSidebar: vi.fn() }).mount()
+    makeBashRow(scroll)
+    const card = makeCompactingCard(scroll)
+    await nextFrame()
+    expect(status.firstChild?.nodeValue).toBe('压缩中')
+    card.setAttribute('data-state', 'ok')
+    await nextFrame()
+    expect(status.firstChild?.nodeValue).toBe('执行中') // bash still running
   })
 })
