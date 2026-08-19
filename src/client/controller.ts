@@ -30,6 +30,26 @@ export type MobilePage = 'sidebar' | 'chat'
 /** Wait after the last scroll event before the pager settles. */
 const SCROLL_SETTLE_MS = 200
 
+/**
+ * Mobile browsers suspend the page's streaming fetch while the tab is in the
+ * background (iOS Safari and Android Chrome both throttle/hold SSE reads).
+ * The connection layer only reconnects when the stream actually fails, so a
+ * suspended-but-alive stream never recovers by itself: frames emitted while
+ * hidden are lost, pending approvals can be settled server-side (cancelled)
+ * with the panel still mounted or the panel never replayed, and the UI stays
+ * stale after returning. DSH exposes no reconnect hook, so the controller
+ * performs a guarded foreground recovery: when a running session shows no
+ * DOM activity shortly after returning to the foreground, it reloads the
+ * page — a fresh boot replays history and the server replays unanswered
+ * pending approvals on mux open (dsh-host-apiproxy mux-open replay).
+ */
+/** How long after returning to the foreground to wait before judging the stream (lets buffered frames / auto-reconnect settle first). */
+const FOREGROUND_CHECK_DELAY_MS = 1800
+/** A running session with no DOM activity for this long is judged dead (no streaming frames, no status changes). */
+const FOREGROUND_QUIET_MS = 1500
+/** sessionStorage key remembering that the current page load already did a recovery reload (stops reload loops). */
+const RECOVERY_STAMP_KEY = 'dshm:recovered-load'
+
 /** The sidebar shell's collapse toggle labels (zh / en) — clicking it while
  *  the sidebar is expanded must NOT collapse it to the rail (which would
  *  unload its content); it flips back to the chat page instead. */
@@ -129,6 +149,11 @@ export class MobileController implements MobileControllerHandle {
   #mountFrame: number | null = null
   #resizeTimer: number | null = null
   #settleTimer: number | null = null
+  #foregroundTimer: number | null = null
+  #lastActivityAt = 0
+  #foregroundReloaded = false
+  #conversationObserver: MutationObserver | null = null
+  #conversationTarget: Element | null = null
   #expandPending = false
   #mounted = false
   #disposed = false
@@ -181,9 +206,18 @@ export class MobileController implements MobileControllerHandle {
     // page) returns to the chat page — PiUI's overlay behavior.
     document.addEventListener('click', this.#onDocClickCapture, true)
 
+    // Foreground recovery: mobile browsers suspend the streaming fetch while
+    // the tab is hidden and the connection layer never notices, so returning
+    // to the tab can leave the conversation stale and pending approvals lost.
+    // Watch visibility and judge stream liveness shortly after returning.
+    document.addEventListener('visibilitychange', this.#onVisibilityChange)
+
     const root = document.getElementById('root')
     if (root !== null) {
-      this.#rootObserver = new MutationObserver(() => { this.#ensureFrameObserver() })
+      this.#rootObserver = new MutationObserver(() => {
+        this.#ensureFrameObserver()
+        this.#ensureConversationActivityObserver()
+      })
       this.#rootObserver.observe(root, { childList: true })
       // The composer mounts/unmounts with the session skeleton and the
       // model name swaps in place: any subtree change can move the label's
@@ -225,6 +259,9 @@ export class MobileController implements MobileControllerHandle {
     this.#mounted = false
     this.#frameObserver?.disconnect()
     this.#frameObserver = null
+    this.#conversationObserver?.disconnect()
+    this.#conversationObserver = null
+    this.#conversationTarget = null
     this.#rootObserver?.disconnect()
     this.#rootObserver = null
     this.#composerObserver?.disconnect()
@@ -252,13 +289,15 @@ export class MobileController implements MobileControllerHandle {
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame]) {
+    document.removeEventListener('visibilitychange', this.#onVisibilityChange)
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#foregroundTimer, this.#marqueeFrame]) {
       if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#keyboardFrame = null
     this.#mountFrame = null
     this.#resizeTimer = null
     this.#settleTimer = null
+    this.#foregroundTimer = null
     this.#marqueeFrame = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
@@ -290,6 +329,88 @@ export class MobileController implements MobileControllerHandle {
     meta.content = VIEWPORT_CONTENT
     document.head.append(meta)
     this.#viewportMeta = meta
+  }
+
+  /**
+   * Foreground recovery entry: a mobile browser suspends the streaming
+   * fetch while hidden, and the connection layer only reconnects when the
+   * stream actually fails — a suspended-but-alive stream never resumes on
+   * its own. Returning to the tab therefore needs a liveness check: if a
+   * session is still running but nothing has mutated the DOM recently, the
+   * stream is dead and the only reliable recovery DSH offers is a fresh
+   * boot (history backfill + server-side pending-approval replay on mux
+   * open). Guard rails keep the reload rare and safe: it never fires while
+   * the user is composing, and only once per page load.
+   */
+  readonly #onVisibilityChange = (): void => {
+    if (document.visibilityState !== 'visible') return
+    if (this.#foregroundTimer !== null) return
+    this.#foregroundTimer = window.setTimeout(() => {
+      this.#foregroundTimer = null
+      this.#checkForegroundRecovery()
+    }, FOREGROUND_CHECK_DELAY_MS)
+  }
+
+  /** The recovery judge — everything must line up or nothing happens. */
+  readonly #checkForegroundRecovery = (): void => {
+    // Phone layout only; the desktop shell has no suspended-stream problem.
+    if (!(this.#mql?.matches ?? false)) return
+    // One recovery per page load (sessionStorage survives the reload, so
+    // the freshly booted page never immediately reloads itself again).
+    if (sessionStorage.getItem(RECOVERY_STAMP_KEY) === '1') return
+    // A running session is a precondition: idle sessions have no stream to
+    // restore, and mutating around a session the user isn't watching is
+    // pointless. The running mark is the SELECTED sidebar row's activity
+    // svg (data-state="ongoing" — set by the host list feed). Only the
+    // selected row counts: a background running session elsewhere in the
+    // tree must never trigger a reload while the user is looking at
+    // another session.
+    const selectedRow = document.querySelector('[role="treeitem"][aria-selected="true"]')
+    if (selectedRow === null) return
+    if (selectedRow.querySelector('[data-state="ongoing"]') === null) return
+    // Never reload over the user's draft: if the composer holds text or
+    // focus, the stream may be fine and we would destroy work.
+    if (this.#composerHoldsInput()) return
+    // Silence for FOREGROUND_QUIET_MS while a session is running means the
+    // stream is not delivering (token deltas/status flips mutate the DOM
+    // constantly while it is).
+    if (Date.now() - this.#lastActivityAt < FOREGROUND_QUIET_MS) return
+    try {
+      sessionStorage.setItem(RECOVERY_STAMP_KEY, '1')
+    } catch {
+      // Storage unavailable: still recover once (the in-memory flag below
+      // stops the loop for this load).
+    }
+    this.#foregroundReloaded = true
+    location.reload()
+  }
+
+  /** True while the user is actually composing (never reload over a draft
+   *  or an open keyboard). Mere focus does NOT count — the app auto-focuses
+   *  the input on session open, so focus alone would block recovery every
+   *  time. Real composition signals: non-empty draft text, or the OS
+   *  keyboard visibly occupying the layout (visualViewport compressed on
+   *  iOS; layout viewport compressed under interactive-widget=resizes-content
+   *  on Android). */
+  readonly #composerHoldsInput = (): boolean => {
+    const card = document.querySelector('[data-composer-card]')
+    if (card === null) return false
+    const editable = card.querySelector<HTMLElement | HTMLTextAreaElement>(
+      '[contenteditable="true"], textarea',
+    )
+    if (editable !== null) {
+      const text = editable instanceof HTMLTextAreaElement ? editable.value : editable.textContent ?? ''
+      if (text.trim() !== '') return true
+    }
+    // Keyboard detection: a visual viewport at least ~120px shorter than the
+    // layout viewport means the OS keyboard is up (iOS); on Android with
+    // interactive-widget=resizes-content the LAYOUT viewport itself shrinks
+    // by the keyboard inset. Both are far larger than any anti-bounce
+    // address-bar jitter.
+    const vv = window.visualViewport
+    if (vv !== null && vv.height < window.innerHeight - 120) return true
+    if (window.innerHeight < (window.screen.availHeight ?? window.innerHeight) - 120) return true
+    return false
   }
 
   /** The always-open phone layout expands the docked sidebar once when the
@@ -358,6 +479,31 @@ export class MobileController implements MobileControllerHandle {
     // gets the always-open treatment and starts on the chat page.
     this.#ensureSidebarOpen()
     this.#placeOnChat('auto')
+    this.#ensureConversationActivityObserver()
+  }
+
+  /**
+   * Attach the foreground-recovery liveness clock to the MESSAGE AREA only.
+   * Streaming token deltas, new blocks and status flips all mutate the
+   * conversation scroll body; sidebar housekeeping and composer chrome do
+   * not. The target is re-resolved whenever the root mutates (session
+   * switches rebuild the scroll body), so the clock always watches the
+   * visible conversation.
+   */
+  readonly #ensureConversationActivityObserver = (): void => {
+    const target = document.querySelector('[data-conversation-scroll]')
+    if (target === null || target === this.#conversationTarget) return
+    this.#conversationObserver?.disconnect()
+    this.#conversationTarget = target
+    this.#conversationObserver = new MutationObserver(() => {
+      this.#lastActivityAt = Date.now()
+    })
+    this.#lastActivityAt = Date.now()
+    this.#conversationObserver.observe(target, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    })
   }
 
   /** Crossing the breakpoint: entering mobile re-expands the sidebar and
