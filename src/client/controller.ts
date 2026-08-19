@@ -371,6 +371,7 @@ export class MobileController implements MobileControllerHandle {
         frame?.style.removeProperty(prop)
       }
       this.#html?.removeAttribute(PAGE_ATTR)
+      this.#html?.removeAttribute('data-dshm-flipping')
       return
     }
     this.#ensureSidebarOpen()
@@ -427,6 +428,14 @@ export class MobileController implements MobileControllerHandle {
     frame.style.setProperty('--dshm-scale', `${1 - abs * 0.06}`)
     frame.style.setProperty('--dshm-offset-x', `${right * right * -48}px`)
     frame.style.setProperty('--dshm-origin-x', `${50 - progress * 50}%`)
+    // Gate the card's 3D context behind [data-dshm-flipping]: at rest the
+    // card must not pin a preserve-3d layer — some mobile engines clip or
+    // fail to paint sticky panels that mount inside it (the approval
+    // "等待审批" / question cards in the composer seat), and a pinned 3D
+    // layer janks the conversation column's scroll. Only a live flip needs
+    // the 3D context for the rotateY/scale to render.
+    if (abs > 0.001) this.#html?.setAttribute('data-dshm-flipping', '')
+    else this.#html?.removeAttribute('data-dshm-flipping')
   }
 
   readonly #settlePager = (): void => {
