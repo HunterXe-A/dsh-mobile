@@ -111,7 +111,11 @@ const MARQUEE_GAP_PX = 32
  * execution (执行中). The status element is the only role=status with
  * aria-live=polite in the conversation scroll area. Tool names follow the
  * wire tool names (dsh-tool-* registrations); bash/pwsh rows carry no
- * data-tool, so data-sample="bash" is matched separately.
+ * data-tool, so data-sample="bash" is matched separately. A live compaction
+ * (automatic or /compact) wins over every tool label (压缩中): the live flag
+ * is driven by the conversationEvents compaction probe (registerCompactionProbe
+ * in index.ts), with the running /compact card in the DOM as a fallback while
+ * the event stream is not connected.
  */
 const TASK_STATUS_SELECTOR = '[role="status"][aria-live="polite"]'
 const TASK_LABEL_THINKING = '思考中'
@@ -177,6 +181,8 @@ export interface MobileControllerHandle {
   isSidebarOpen(): boolean
   /** Return to the chat page (a session picked in the sidebar). */
   returnToChat(): void
+  /** Drive the live compaction flag (from the conversationEvents probe). */
+  setTaskCompacting(active: boolean): void
   /** Install the controller; idempotent. */
   mount(): void
   /** Remove every DOM effect; idempotent. */
@@ -199,6 +205,7 @@ export class MobileController implements MobileControllerHandle {
   #taskStatusOriginal: string | null = null
   #taskStatusDotTimer: number | null = null
   #taskStatusDotCount = 0
+  #taskCompacting = false
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
   #keyboardFrame: number | null = null
@@ -229,6 +236,15 @@ export class MobileController implements MobileControllerHandle {
    *  the sidebar state is untouched, so its content stays rendered. */
   returnToChat(): void {
     this.#placeOnChat('smooth')
+  }
+
+  /** Drive the live compaction flag: the conversationEvents probe calls this
+   *  when a compaction lifecycle event lands (compaction/start → true;
+   *  compaction/end → false). Ranks above every tool label in the status. */
+  setTaskCompacting(active: boolean): void {
+    if (this.#taskCompacting === active) return
+    this.#taskCompacting = active
+    this.#requestTaskStatusSync()
   }
 
   /** Install the controller. Safe to call once; a second call is a no-op.
@@ -897,9 +913,11 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** The concrete task label for the newest running tool row (or 思考中 while
-   *  the model is generating with no tool in flight); a running /compact
-   *  command card wins over every tool (压缩中). */
+   *  the model is generating with no tool in flight); a live compaction event
+   *  flag outranks everything (压缩中), with the running /compact card in the
+   *  DOM as a fallback. */
   readonly #currentTaskLabel = (target: Element): string => {
+    if (this.#taskCompacting) return TASK_LABEL_COMPACTING
     const cards = target.querySelectorAll(TASK_COMPACTING_SELECTOR)
     for (const card of cards) {
       // The card title is the command name ("compact"); the summary ("正在压

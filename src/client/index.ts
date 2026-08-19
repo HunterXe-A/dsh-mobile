@@ -11,7 +11,7 @@
  * renders completely untouched, and the pager starts on the chat page —
  * swiping reveals the always-open sidebar.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ConversationEventInput, ConversationEventRegistry, ConversationMatch, ConversationNodeContext, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the layout plugin's Context merge (ctx.layout) and the
 // sessions service surface into this compilation unit.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -21,7 +21,42 @@ import { MobileController } from './controller.ts'
 import './mobile.css'
 
 /** Services required by the mobile plugin. */
-export const inject = ['layout', 'sessions']
+export const inject = ['layout', 'sessions', 'conversationEvents']
+
+/**
+ * Probe the live compaction lifecycle (automatic AND /compact) off the
+ * conversation event stream. The stock chat renders nothing while a
+ * compaction runs — the checkpoints land only at the end — so without this
+ * probe the turn-status label would sit stale or vanish for the whole
+ * automatic-compaction window. State-only Definition: no view target, no
+ * location data, nothing rendered; it just flips the controller's
+ * compaction flag (compaction/start → true, compaction/end → false).
+ * `compaction/summary` keeps the flag up (it precedes the end event).
+ * @param events - conversation event registry service.
+ * @param controller - DOM controller driving the status label.
+ * @returns the registration disposer for the effect teardown.
+ */
+function registerCompactionProbe(events: ConversationEventRegistry, controller: MobileController): () => void {
+  return events.register({
+    kind: 'dshm-task-compaction',
+    match: (event: ConversationEventInput['event']): { id: string, role: 'start' | 'update' } | null => {
+      const type = event.type
+      if (type !== 'compaction/start' && type !== 'compaction/end' && type !== 'compaction/summary') return null
+      const data = event.data as { compactionId?: unknown }
+      const id = typeof data.compactionId === 'string' ? data.compactionId : ''
+      if (id === '') return null
+      return { id, role: type === 'compaction/start' ? 'start' : 'update' }
+    },
+    start: (): Record<string, never> => {
+      controller.setTaskCompacting(true)
+      return {}
+    },
+    update: (context: ConversationNodeContext<Record<string, never>>, match: ConversationMatch) => {
+      controller.setTaskCompacting(match.event.type !== 'compaction/end')
+      return context.state
+    },
+  } satisfies ConversationNodeDefinition)
+}
 
 /**
  * Install the mobile surfaces: the DOM controller (one effect). A
@@ -36,6 +71,7 @@ export function apply(ctx: ClientContext): void {
       toggleSidebar: () => ctx.layout.toggleSidebar(),
     })
     controller.mount()
+    const offProbe = registerCompactionProbe(ctx.conversationEvents, controller)
     let lastCurrent = ctx.sessions.list.getSnapshot().current
     const off = ctx.sessions.list.subscribe(() => {
       const next = ctx.sessions.list.getSnapshot().current
@@ -45,6 +81,7 @@ export function apply(ctx: ClientContext): void {
     })
     return () => {
       off()
+      offProbe()
       controller.dispose()
     }
   }, 'dsh-mobile: DOM controller')

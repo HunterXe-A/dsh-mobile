@@ -242,4 +242,21 @@ describe('MobileController turn-status rewrite', () => {
     await nextFrame()
     expect(status.firstChild?.nodeValue).toBe('执行中') // bash still running
   })
+
+  it('shows 压缩中 from the live compaction event flag (no DOM card needed)', async () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const { scroll, status } = makeConversation()
+    const controller = makeController({ toggleSidebar: vi.fn() })
+    controller.mount()
+    makeBashRow(scroll)
+    await nextFrame()
+    expect(status.firstChild?.nodeValue).toBe('执行中')
+    controller.setTaskCompacting(true) // compaction/start landed
+    await nextFrame()
+    expect(status.firstChild?.nodeValue).toBe('压缩中')
+    controller.setTaskCompacting(false) // compaction/end landed
+    await nextFrame()
+    expect(status.firstChild?.nodeValue).toBe('执行中')
+  })
 })
