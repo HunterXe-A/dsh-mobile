@@ -675,10 +675,12 @@
 
 /* Coarse pointers (touch) never hover: drop scrollbars entirely. */
 @media (pointer: coarse) {
+  html[data-dsh-mobile],
   [data-dsh-mobile] * {
     scrollbar-width: none;
   }
 
+  html[data-dsh-mobile]::-webkit-scrollbar,
   [data-dsh-mobile] *::-webkit-scrollbar {
     width: 0;
     height: 0;
