@@ -125,6 +125,13 @@ export class MobileController implements MobileControllerHandle {
   #mountFrame: number | null = null
   #resizeTimer: number | null = null
   #settleTimer: number | null = null
+  #returnTimer: number | null = null
+  /** Last seen window.innerWidth — the resize handler only re-anchors the
+   *  pager when the WIDTH changed (rotation / split-screen reflows the page
+   *  tracks). A height-only resize (OS keyboard pop, URL bar collapse) must
+   *  never touch scrollLeft: re-anchoring there can cancel the smooth
+   *  return-to-chat that a session pick just started. */
+  #lastInnerWidth = -1
   #expandPending = false
   #mounted = false
   #disposed = false
@@ -143,7 +150,27 @@ export class MobileController implements MobileControllerHandle {
   /** Return to the chat page (a session picked in the sidebar). Pure scroll —
    *  the sidebar state is untouched, so its content stays rendered. */
   returnToChat(): void {
+    // The smooth scroll can be cancelled mid-flight: picking a session
+    // lands focus on the composer input, and the browser's focus
+    // scroll-into-view (or the OS keyboard pop, whose height-only window
+    // resize the handler above now refuses to re-anchor) pre-empts smooth
+    // scrolling. The guard below re-issues the scroll, hard, if the pager
+    // has not actually reached the chat page.
     this.#placeOnChat('smooth')
+    if (this.#returnTimer !== null) window.clearTimeout(this.#returnTimer)
+    this.#returnTimer = window.setTimeout(() => {
+      this.#returnTimer = null
+      const frame = findFrame()
+      const mobile = this.#mql?.matches ?? false
+      if (frame === null || !mobile) return
+      const chatLeft = chatPageLeft(frame)
+      if (chatLeft <= 0) return
+      if (frame.scrollLeft < chatLeft - 4) {
+        // Animation continuity is already lost — an instant scroll is the
+        // honest "always lands on the session" guarantee.
+        frame.scrollTo({ left: chatLeft, behavior: 'auto' })
+      }
+    }, 220)
   }
 
   /** Install the controller. Safe to call once; a second call is a no-op.
@@ -171,6 +198,7 @@ export class MobileController implements MobileControllerHandle {
 
     // Keep the active page in place when the viewport width changes within
     // a breakpoint side (rotation / split-screen reflows the page tracks).
+    this.#lastInnerWidth = window.innerWidth
     window.addEventListener('resize', this.#onWindowResize)
 
     // A tap on the exposed chat card (while the pager rests on the sidebar
@@ -248,7 +276,7 @@ export class MobileController implements MobileControllerHandle {
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame]) {
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer]) {
       if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#keyboardFrame = null
@@ -256,6 +284,7 @@ export class MobileController implements MobileControllerHandle {
     this.#resizeTimer = null
     this.#settleTimer = null
     this.#marqueeFrame = null
+    this.#returnTimer = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
     if (this.#viewportMeta !== null) {
@@ -374,7 +403,11 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Width reflow within one breakpoint side: keep the active page put and
-   *  re-measure the model-name overflow (the row width drives it). */
+   *  re-measure the model-name overflow (the row width drives it). Only a
+   *  WIDTH change re-anchors — a height-only resize (OS keyboard pop, URL
+   *  bar) must never scroll the pager, or it would cancel the smooth
+   *  return-to-chat a session pick just started (the composer's focus
+   *  landing pops the keyboard exactly then). */
   readonly #onWindowResize = (): void => {
     if (this.#resizeTimer !== null) return
     this.#resizeTimer = window.setTimeout(() => {
@@ -382,13 +415,16 @@ export class MobileController implements MobileControllerHandle {
       const frame = findFrame()
       const mobile = this.#mql?.matches ?? false
       if (frame === null || !mobile) return
+      const widthChanged = window.innerWidth !== this.#lastInnerWidth
+      this.#lastInnerWidth = window.innerWidth
+      this.#requestMarqueeSync()
+      if (!widthChanged) return
       const chatLeft = chatPageLeft(frame)
       if (chatLeft <= 0) return
       const onChat = frame.scrollLeft >= chatLeft / 2
       frame.scrollTo({ left: onChat ? chatLeft : 0, behavior: 'auto' })
       this.#mirrorPage(frame)
       this.#updateFlipVars(frame)
-      this.#requestMarqueeSync()
     }, 120)
   }
 
@@ -461,7 +497,7 @@ export class MobileController implements MobileControllerHandle {
       if (btn !== null && SIDEBAR_COLLAPSE_LABELS.has(btn.getAttribute('aria-label') ?? '')) {
         event.preventDefault()
         event.stopPropagation()
-        this.#placeOnChat('smooth')
+        this.returnToChat()
         return
       }
     }
@@ -469,7 +505,7 @@ export class MobileController implements MobileControllerHandle {
     if (frame.scrollLeft >= chatLeft / 2) return
     const chatCard = frame.children[1]
     if (chatCard instanceof Element && chatCard.contains(target)) {
-      this.#placeOnChat('smooth')
+      this.returnToChat()
     }
   }
 

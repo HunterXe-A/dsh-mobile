@@ -214,6 +214,72 @@ describe('MobileController always-open sidebar + pager', () => {
     controller.returnToChat()
     expect(frame.scrollLeft).toBe(300)
   })
+
+  it('re-issues the return when the smooth scroll is cancelled (focus hit the composer)', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    // Picking a session lands focus on the composer input; the browser's
+    // focus scroll-into-view cancels the smooth scroll mid-flight — the
+    // first smooth request goes nowhere. The return guard re-issues the
+    // scroll (instant) so the pager still lands on the chat page.
+    let smoothed = 0
+    let instant = 0
+    frame.scrollTo = ((opts: ScrollToOptions): void => {
+      if (opts.behavior === 'smooth') {
+        smoothed += 1
+        return // cancelled: nothing moves
+      }
+      instant += 1
+      frame.scrollLeft = opts.left ?? 0
+    }) as never
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    frame.scrollLeft = 0
+    controller.returnToChat()
+    await flushTimers(300) // past the 220ms guard
+    expect(smoothed).toBe(1)
+    expect(instant).toBeGreaterThanOrEqual(1) // the guard's hard re-issue
+    expect(frame.scrollLeft).toBe(300)
+  })
+
+  it('a height-only (keyboard) window resize never re-anchors the pager', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    // A smooth that crawls (as if the keyboard's height-only resize keeps
+    // interrupting layout mid-flight): the pager must STILL converge on the
+    // chat page, because the resize handler refuses to re-anchor on an
+    // unchanged width.
+    frame.scrollTo = ((opts: ScrollToOptions): void => {
+      if (opts.behavior === 'smooth') {
+        frame.scrollLeft = Math.min(frame.scrollLeft + 60, opts.left ?? 0)
+      } else {
+        frame.scrollLeft = opts.left ?? 0
+      }
+    }) as never
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    frame.scrollLeft = 0
+    controller.returnToChat() // smooth: 0 → 60
+    // The keyboard pops: innerHeight changed, innerWidth did not.
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })
+    window.dispatchEvent(new Event('resize'))
+    await flushTimers(300)
+    expect(frame.scrollLeft).toBe(300) // the return guard converged; no re-anchor fought it
+  })
+
+  it('still re-anchors on a real width change (rotation / split-screen)', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    // The pager sits mid-track (as during a rotation) — a WIDTH change
+    // re-anchors to the nearest page, unchanged behavior.
+    frame.scrollLeft = 200 // chatLeft 300, midpoint 150 → chat
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 900 })
+    window.dispatchEvent(new Event('resize'))
+    await flushTimers(200)
+    expect(frame.scrollLeft).toBe(300)
+  })
 })
 
 describe('MobileController pager settle (re-snap without state sync)', () => {
