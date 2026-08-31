@@ -56,19 +56,13 @@
    cap toward HALF the viewport (50vw, capped at 420px), so at 768px the
    two pages meet 50/50 (PiUI's half-open symmetry) and the chat sliver
    never loses its tap-to-return presence. Growth is monotone with the
-   viewport — never narrower than the phone cap, so no regression. The
-   composer has the room too: the model-name cap relaxes from 96px to
-   160px. */
+   viewport — never narrower than the phone cap, so no regression. (The
+   composer row is wide enough here for the FULL model name: the adaptive
+   cap below — a @container query on the row — lets the label grow instead
+   of marqueeing.) */
 @media (min-width: 560px) and (max-width: 768px) {
   [data-dsh-mobile] {
     --dshm-sidebar-width: clamp(360px, 50vw, 420px);
-  }
-
-  /* The trigger is pinned via aria-haspopup='menu': a bare `button` would
-     also hit the open picker's option rows and nav cells (their first
-     spans are optionCopy/cellLabel) and deform the menu card. */
-  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child {
-    max-width: 160px;
   }
 }
 
@@ -289,7 +283,15 @@
     gap: 8px;
   }
 
+  /* The stock row rule is flex-wrap:wrap, so once the trailing cluster
+     (model chip + context ring + send) outgrows the row it breaks onto a
+     SECOND line — the "bar became two rows" report. On phones the model
+     chip is the designated shrink seat (its label already marquees), so
+     one line is always enough: nowrap forces the browser to compress the
+     chip instead of wrapping, and the rules below make sure the chip can
+     actually shrink that far. */
   [data-dsh-mobile] [data-composer-card] > div:last-child {
+    flex-wrap: nowrap;
     gap: 8px;
     position: relative;
   }
@@ -342,6 +344,9 @@
   [data-dsh-mobile] [data-composer-card] div:has(> [data-slot='conversation.input.model']) {
     flex: 0 1 auto;
     min-width: 0;
+    /* Tighter than the stock 12px so the ring and send keep more of the
+       row for the model chip. */
+    gap: 8px;
   }
 
   /* The model trigger chip itself is the trailing cluster's only
@@ -352,6 +357,31 @@
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] {
     flex: 0 1 auto;
     min-width: 0;
+  }
+
+  /* The effort badge (the trigger's non-first span under the marquee label)
+     is stock flex:none: it would floor the chip's minimum width and, with
+     the row now nowrap, that floor could still overflow on the narrowest
+     phones. Let it yield with an ellipsis so the model chip absorbs every
+     extra pixel of deficit first. Pinned via aria-haspopup='menu': the open
+     picker's option rows are buttons WITHOUT that attribute, so this can
+     never touch the menu card. */
+  [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:not(:first-child) {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Below 390px (iPhone 12/13 class) even the ellipsized effort eats pixels
+     the label window needs: drop it entirely — the icon, the marquee label
+     and the chevron remain, and the row stays one line on the narrowest
+     phones. */
+  @media (max-width: 390px) {
+    [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:not(:first-child) {
+      display: none;
+    }
   }
 
   /* The context ring keeps its fixed seat (stock 28px circle, flex:none
@@ -394,9 +424,16 @@
     max-width: calc(100vw - 32px);
   }
 
-  /* Model name: capped width with a floor so the marquee window stays
-     readable. At rest the stock ellipsis hints; when the name overflows,
-     the controller wraps TWO item spans (text + text clone, each with a
+  /* Model name: the FULL name by default — no width cap, so when the row
+     has room (wide phones, split-screen, tablets) the label grows to its
+     natural width and the controller's overflow measure stays 0: no
+     marquee, no ellipsis, the whole "DeepSeek-V4-Flash" is readable. The
+     cap is a @container query: the composer ROW declares
+     container-type: inline-size (anonymous container), so
+     `@container (max-width: …)` matches the row's own width — the label
+     only caps into the marquee window when the row actually runs out of
+     space. At rest the stock ellipsis hints; when the name overflows, the
+     controller wraps TWO item spans (text + text clone, each with a
      trailing gap) in a [data-dshm-marquee-runner] layer and tags the
      label with data-dshm-marquee + --dshm-marquee-duration. The keyframes
      slide the runner by -50% (one text width + one gap) on the
@@ -413,14 +450,28 @@
      them — nowrap + translateZ deforming the menu card (the report this
      rule set fixed). */
   [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child {
-    max-width: 96px;
-    min-width: 48px;
+    min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
     /* This element becomes its own compositing ancestor, so the animating
        runner layer cannot bleed past it on iOS Safari. */
     transform: translateZ(0);
+  }
+
+  /* The row is tight: cap the name to the marquee window (96px, 48px
+     floor). The threshold is the point where a typical full name
+     ("DeepSeek-V4-Flash", ~122px at 13/500, plus effort + chevron ≈ 336px
+     of row) stops fitting comfortably — below it every pixel a longer name
+     would need has to come out of the label anyway, so the marquee window
+     is the honest render; above it the name gets its natural width and
+     360px is also the same cut the stock PermissionSelect uses to
+     collapse its label, so the two chips tighten together. */
+  @container (max-width: 360px) {
+    [data-dsh-mobile] [data-composer-card] [data-slot='conversation.input.model'] button[aria-haspopup='menu'] > span:first-child {
+      max-width: 96px;
+      min-width: 48px;
+    }
   }
 
   /* The transform layer: two item spans (text + clone), each with a
