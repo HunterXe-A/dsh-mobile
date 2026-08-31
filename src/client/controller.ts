@@ -30,6 +30,20 @@ export type MobilePage = 'sidebar' | 'chat'
 /** Wait after the last scroll event before the pager settles. */
 const SCROLL_SETTLE_MS = 200
 
+/** Window (ms) after a session pick during which automatic focus into the
+ *  composer is bounced back out: picking a session in the sidebar lands
+ *  focus on the input, which pops the OS keyboard over the pager's smooth
+ *  return-to-chat. On phones the keyboard must not open until the user
+ *  actually taps the input — the focus is suppressed (blurred) during this
+ *  window, so the return scroll runs undisturbed. */
+const FOCUS_SUPPRESS_MS = 600
+
+/** A focusin is judged "the user's own tap" only when a pointerdown landed
+ *  on the same element within this recent window (a real tap intent).
+ *  Older pointerdowns (e.g. the session row the user just tapped) must not
+ *  count. */
+const POINTER_ALLOW_MS = 500
+
 /** The sidebar shell's collapse toggle labels (zh / en) — clicking it while
  *  the sidebar is expanded must NOT collapse it to the rail (which would
  *  unload its content); it flips back to the chat page instead. */
@@ -132,6 +146,13 @@ export class MobileController implements MobileControllerHandle {
    *  never touch scrollLeft: re-anchoring there can cancel the smooth
    *  return-to-chat that a session pick just started. */
   #lastInnerWidth = -1
+  /** Timestamp until which automatic focus into the composer is kicked back
+   *  out (see FOCUS_SUPPRESS_MS). */
+  #focusSuppressUntil = -1
+  /** The most recent pointerdown target + time, used to tell the user's own
+   *  tap on the composer from the app's automatic focus. */
+  #lastPointerTarget: Element | null = null
+  #lastPointerAt = -1
   #expandPending = false
   #mounted = false
   #disposed = false
@@ -150,6 +171,15 @@ export class MobileController implements MobileControllerHandle {
   /** Return to the chat page (a session picked in the sidebar). Pure scroll —
    *  the sidebar state is untouched, so its content stays rendered. */
   returnToChat(): void {
+    // On phones, picking a session must NOT pop the OS keyboard: the app
+    // auto-focuses the composer, and that keyboard would cover the pager's
+    // smooth return-to-chat (and usually stalls it). Enter the focus
+    // suppression window on mobile only — the desktop behavior (focus the
+    // input after a session pick) stays untouched because the desktop
+    // still wants to type straight away.
+    if (this.#mql?.matches ?? false) {
+      this.#focusSuppressUntil = Date.now() + FOCUS_SUPPRESS_MS
+    }
     // The smooth scroll can be cancelled mid-flight: picking a session
     // lands focus on the composer input, and the browser's focus
     // scroll-into-view (or the OS keyboard pop, whose height-only window
@@ -204,6 +234,15 @@ export class MobileController implements MobileControllerHandle {
     // A tap on the exposed chat card (while the pager rests on the sidebar
     // page) returns to the chat page — PiUI's overlay behavior.
     document.addEventListener('click', this.#onDocClickCapture, true)
+
+    // After a session pick the app auto-focuses the composer textarea; on a
+    // phone that pops the OS keyboard over the pager's return-to-chat.
+    // Record real pointer-downs (the user's own taps) and, during the
+    // post-pick window, blur any focus into the composer that does NOT stem
+    // from one — the user's own tap still focuses (they want to type), the
+    // automatic focus is bounced.
+    document.addEventListener('pointerdown', this.#onPointerDownCapture, true)
+    document.addEventListener('focusin', this.#onFocusInCapture, true)
 
     const root = document.getElementById('root')
     if (root !== null) {
@@ -276,6 +315,8 @@ export class MobileController implements MobileControllerHandle {
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
+    document.removeEventListener('pointerdown', this.#onPointerDownCapture, true)
+    document.removeEventListener('focusin', this.#onFocusInCapture, true)
     for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer]) {
       if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
@@ -474,6 +515,32 @@ export class MobileController implements MobileControllerHandle {
       frame.scrollTo({ left: target, behavior: 'smooth' })
     }
     this.#mirrorPage(frame)
+  }
+
+  /** Record every pointerdown (capture, passive) so the focus-in suppressor
+   *  can distinguish the user's own tap on the composer from the app's
+   *  automatic focus. */
+  readonly #onPointerDownCapture = (event: PointerEvent): void => {
+    const target = event.target
+    this.#lastPointerTarget = target instanceof Element ? target : null
+    this.#lastPointerAt = Date.now()
+  }
+
+  /** During the post-pick window, bounce automatic focus out of the
+   *  composer (the OS keyboard must not cover the return-to-chat). The
+   *  user's OWN tap still focuses: a recent pointerdown on the same element
+   *  (or inside it) means a real intent to type. */
+  readonly #onFocusInCapture = (event: FocusEvent): void => {
+    if (Date.now() > this.#focusSuppressUntil) return
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    if (target.closest('[data-composer-card]') === null) return
+    const pointer = this.#lastPointerTarget
+    const ownTap = pointer !== null
+      && Date.now() - this.#lastPointerAt < POINTER_ALLOW_MS
+      && (pointer === target || target.contains(pointer))
+    if (ownTap) return
+    target.blur()
   }
 
   /** A tap on the exposed chat card returns to the chat page (PiUI's

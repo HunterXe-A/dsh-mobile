@@ -3,6 +3,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileController, PAGE_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
 
+// jsdom has no PointerEvent; the controller's pointerdown listener only
+// reads event.target, so MouseEvent is a sufficient stand-in.
+if (typeof (globalThis as { PointerEvent?: unknown }).PointerEvent === 'undefined') {
+  ;(globalThis as { PointerEvent: unknown }).PointerEvent = MouseEvent
+}
+
 /** A MediaQueryList stub (jsdom has none) that records its change listener.
  *  The prefers-reduced-motion query always reports false (marquee enabled);
  *  every other query reports the given `matches`. */
@@ -279,6 +285,77 @@ describe('MobileController always-open sidebar + pager', () => {
     window.dispatchEvent(new Event('resize'))
     await flushTimers(200)
     expect(frame.scrollLeft).toBe(300)
+  })
+})
+
+describe('MobileController focus suppression after a session pick', () => {
+  /** A composer textarea inside a [data-composer-card]. */
+  function makeComposerTextarea(): HTMLTextAreaElement {
+    const card = document.createElement('div')
+    card.setAttribute('data-composer-card', '')
+    const textarea = document.createElement('textarea')
+    card.append(textarea)
+    document.getElementById('root')?.append(card)
+    return textarea
+  }
+
+  it('bounces the auto-focus off the composer: returnToChat blurs it (no keyboard pop)', () => {
+    stubMatchMedia(true)
+    makeFrame()
+    const textarea = makeComposerTextarea()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    // The user picked a session in the sidebar: the pager returns to chat.
+    controller.returnToChat()
+    // The app auto-focuses the composer (the browser's focus lands on the
+    // textarea) — that would pop the OS keyboard over the return scroll.
+    textarea.focus()
+    document.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    expect(document.activeElement).not.toBe(textarea)
+  })
+
+  it('lets the user OWN tap on the composer focus through', () => {
+    stubMatchMedia(true)
+    makeFrame()
+    const textarea = makeComposerTextarea()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    controller.returnToChat()
+    // The user taps the input themselves (pointerdown lands on it first):
+    // this is a real intent to type, so the focus is allowed.
+    textarea.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    textarea.focus()
+    document.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    expect(document.activeElement).toBe(textarea)
+  })
+
+  it('lets focus through once the suppression window has passed', async () => {
+    stubMatchMedia(true)
+    makeFrame()
+    const textarea = makeComposerTextarea()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    controller.returnToChat()
+    // Late automatic focus (layout settle, model-name re-render) after the
+    // window must not be bounced anymore.
+    await flushTimers(700)
+    textarea.focus()
+    document.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    expect(document.activeElement).toBe(textarea)
+  })
+
+  it('does not suppress on desktop (wide viewport)', () => {
+    stubMatchMedia(false)
+    makeFrame()
+    const textarea = makeComposerTextarea()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    controller.returnToChat()
+    // Desktop keeps the stock behavior: pick a session, focus lands in the
+    // input ready to type, never bounced.
+    textarea.focus()
+    document.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    expect(document.activeElement).toBe(textarea)
   })
 })
 
