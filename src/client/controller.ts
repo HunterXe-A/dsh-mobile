@@ -30,6 +30,12 @@ export type MobilePage = 'sidebar' | 'chat'
 /** Wait after the last scroll event before the pager settles. */
 const SCROLL_SETTLE_MS = 200
 
+/** Poll interval for the return-to-chat smoother. The smooth scroll is only
+ *  re-issued when it is actually STALLED (scrollLeft stopped advancing),
+ *  never pre-empted while it is in flight — so a retry reads as a natural
+ *  continuation, and the pager is never snapped to the chat page. */
+const SMOOTH_RETRY_MS = 160
+
 /** Window (ms) after a session pick during which automatic focus into the
  *  composer is bounced back out: picking a session in the sidebar lands
  *  focus on the input, which pops the OS keyboard over the pager's smooth
@@ -180,27 +186,41 @@ export class MobileController implements MobileControllerHandle {
     if (this.#mql?.matches ?? false) {
       this.#focusSuppressUntil = Date.now() + FOCUS_SUPPRESS_MS
     }
-    // The smooth scroll can be cancelled mid-flight: picking a session
-    // lands focus on the composer input, and the browser's focus
-    // scroll-into-view (or the OS keyboard pop, whose height-only window
-    // resize the handler above now refuses to re-anchor) pre-empts smooth
-    // scrolling. The guard below re-issues the scroll, hard, if the pager
-    // has not actually reached the chat page.
+    this.#redirectToChat()
+  }
+
+  /** Smoothly scroll the pager back to the chat page. The smooth scroll is
+   *  re-issued ONLY when it is genuinely stalled (scrollLeft stops
+   *  advancing across a poll) — the rare browser/OS cancellation case —
+   *  and every re-issue is also smooth, so the retry never reads as an
+   *  instant jump: the user always sees a natural slide back to the
+   *  session. While the animation is in flight (or has landed) the poll is
+   *  a no-op. */
+  readonly #redirectToChat = (): void => {
+    const frame = findFrame()
+    const mobile = this.#mql?.matches ?? false
+    if (frame === null || !mobile) return
+    const chatLeft = chatPageLeft(frame)
+    if (chatLeft <= 0) return
     this.#placeOnChat('smooth')
     if (this.#returnTimer !== null) window.clearTimeout(this.#returnTimer)
-    this.#returnTimer = window.setTimeout(() => {
+    let last = frame.scrollLeft
+    const poll = (): void => {
       this.#returnTimer = null
-      const frame = findFrame()
-      const mobile = this.#mql?.matches ?? false
-      if (frame === null || !mobile) return
-      const chatLeft = chatPageLeft(frame)
-      if (chatLeft <= 0) return
-      if (frame.scrollLeft < chatLeft - 4) {
-        // Animation continuity is already lost — an instant scroll is the
-        // honest "always lands on the session" guarantee.
-        frame.scrollTo({ left: chatLeft, behavior: 'auto' })
+      const f = findFrame()
+      const mm = this.#mql?.matches ?? false
+      if (f === null || !mm) return
+      const cl = chatPageLeft(f)
+      if (cl <= 0) return
+      if (f.scrollLeft >= cl - 4) return // landed on the chat page
+      if (f.scrollLeft <= last) {
+        // Stalled (not advancing): nudge it along, smoothly — never snap.
+        this.#placeOnChat('smooth')
       }
-    }, 220)
+      last = f.scrollLeft
+      this.#returnTimer = window.setTimeout(poll, SMOOTH_RETRY_MS)
+    }
+    this.#returnTimer = window.setTimeout(poll, SMOOTH_RETRY_MS)
   }
 
   /** Install the controller. Safe to call once; a second call is a no-op.

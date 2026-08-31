@@ -224,53 +224,67 @@ describe('MobileController always-open sidebar + pager', () => {
   it('re-issues the return when the smooth scroll is cancelled (focus hit the composer)', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
-    // Picking a session lands focus on the composer input; the browser's
-    // focus scroll-into-view cancels the smooth scroll mid-flight — the
-    // first smooth request goes nowhere. The return guard re-issues the
-    // scroll (instant) so the pager still lands on the chat page.
+    // Mount runs its rAF re-sync synchronously against the DEFAULT scrollTo
+    // (the stub below is installed AFTER mount, so it only observes the
+    // return scroll, not mount's own auto positioning).
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 0 })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    // Picking a session can cancel the first smooth scroll (focus
+    // scroll-into-view). The return smoother must RE-ISSUE it — still
+    // smoothly, never an instant jump — so the pager always lands on the
+    // chat page but never snaps.
     let smoothed = 0
     let instant = 0
     frame.scrollTo = ((opts: ScrollToOptions): void => {
       if (opts.behavior === 'smooth') {
         smoothed += 1
-        return // cancelled: nothing moves
+        if (smoothed === 1) return // first smooth cancelled: nothing moves
+        frame.scrollLeft = opts.left ?? 0 // the re-issued smooth lands
+      } else {
+        instant += 1
+        frame.scrollLeft = opts.left ?? 0
       }
-      instant += 1
-      frame.scrollLeft = opts.left ?? 0
     }) as never
-    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
-    controller.mount()
     frame.scrollLeft = 0
     controller.returnToChat()
-    await flushTimers(300) // past the 220ms guard
-    expect(smoothed).toBe(1)
-    expect(instant).toBeGreaterThanOrEqual(1) // the guard's hard re-issue
+    await flushTimers(500) // initial poll (160ms) + one retry
+    expect(smoothed).toBeGreaterThanOrEqual(2) // re-issued smoothly
+    expect(instant).toBe(0) // never a snap
     expect(frame.scrollLeft).toBe(300)
   })
 
   it('a height-only (keyboard) window resize never re-anchors the pager', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
+    // Same as above: keep the mount-time rAF re-sync against the default
+    // scrollTo, out of the stub window below.
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 0 })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
     // A smooth that crawls (as if the keyboard's height-only resize keeps
-    // interrupting layout mid-flight): the pager must STILL converge on the
-    // chat page, because the resize handler refuses to re-anchor on an
-    // unchanged width.
+    // interrupting layout mid-flight): the smoother re-issues it when it
+    // stalls, and the resize handler refuses to re-anchor on an unchanged
+    // width — so the pager still converges on the chat page, all smooth.
+    let smoothed = 0
+    let instant = 0
     frame.scrollTo = ((opts: ScrollToOptions): void => {
       if (opts.behavior === 'smooth') {
-        frame.scrollLeft = Math.min(frame.scrollLeft + 60, opts.left ?? 0)
+        smoothed += 1
+        frame.scrollLeft = Math.min(frame.scrollLeft + 120, opts.left ?? 0)
       } else {
+        instant += 1
         frame.scrollLeft = opts.left ?? 0
       }
     }) as never
-    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
-    controller.mount()
     frame.scrollLeft = 0
-    controller.returnToChat() // smooth: 0 → 60
+    controller.returnToChat() // smooth: 0 → 120
     // The keyboard pops: innerHeight changed, innerWidth did not.
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 500 })
     window.dispatchEvent(new Event('resize'))
-    await flushTimers(300)
-    expect(frame.scrollLeft).toBe(300) // the return guard converged; no re-anchor fought it
+    await flushTimers(800)
+    expect(frame.scrollLeft).toBe(300) // the smoother converged
+    expect(instant).toBe(0) // no re-anchor, no snap — all smooth
   })
 
   it('still re-anchors on a real width change (rotation / split-screen)', async () => {
