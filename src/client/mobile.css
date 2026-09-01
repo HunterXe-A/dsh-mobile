@@ -717,14 +717,13 @@
     display: none !important;
   }
 
-  /* Turn-status shimmer: keep the sweep but cut GPU cost. The stock 1.8s
-     background-position animation repaints every frame on the main thread.
-     Slowing to 4s halves compositing frequency; will-change promotes the
-     element to its own compositor layer so the sweep runs entirely on GPU
-     without triggering main-thread repaints. */
+  /* Turn-status shimmer: the stock 1.8s background-position animation
+     repaints every frame on the main thread. Override with a slower 4s
+     duration — less frequent repaints = less CPU. No will-change: that
+     creates a permanent compositor layer even when the animation is idle,
+     wasting GPU memory. */
   [data-dsh-mobile] [role='status'][aria-live='polite'] {
     animation-duration: 4s !important;
-    will-change: background-position;
   }
 }
 

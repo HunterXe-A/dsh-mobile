@@ -203,9 +203,12 @@ export class MobileController implements MobileControllerHandle {
   #frameObserver: MutationObserver | null = null
   #rootObserver: MutationObserver | null = null
   #composerObserver: MutationObserver | null = null
+  #composerObserverTarget: Element | null = null
   #marqueeLabel: HTMLElement | null = null
   #marqueeRO: ResizeObserver | null = null
   #marqueeFrame: number | null = null
+  #marqueeTimer: number | null = null
+  #lastMarqueeSyncAt = 0
   #taskStatusFrame: number | null = null
   #taskStatusElement: HTMLElement | null = null
   #taskStatusOriginal: string | null = null
@@ -303,6 +306,7 @@ export class MobileController implements MobileControllerHandle {
       this.#rootObserver = new MutationObserver(() => {
         this.#ensureFrameObserver()
         this.#ensureConversationActivityObserver()
+        this.#rebindComposerObserver()
       })
       // subtree: the session view is mounted deep inside #root (the start
       // screen and an opened session swap the conversation scroll body), so
@@ -310,16 +314,11 @@ export class MobileController implements MobileControllerHandle {
       // the activity/status observers attached to a detached node.
       this.#rootObserver.observe(root, { childList: true, subtree: true })
       // The composer mounts/unmounts with the session skeleton and the
-      // model name swaps in place: any subtree change can move the label's
-      // overflow state, so re-measure on every mutation (rAF-throttled —
-      // the check is one querySelector + two reads, cheap even while
-      // streaming tokens mutate the tree every frame).
-      this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync() })
-      this.#composerObserver.observe(root, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      })
+      // model name swaps in place: re-measure on mutations inside the
+      // composer card only (not the entire root — token streaming mutates
+      // the conversation tree every frame and would trigger wasteful re-measures).
+      this.#rebindComposerObserver()
+      this.#requestMarqueeSync()
     }
     // Layout-only overflow changes (row squeeze, font load) do not mutate
     // the tree: watch the label's box too. jsdom has no ResizeObserver, so
@@ -356,6 +355,7 @@ export class MobileController implements MobileControllerHandle {
     this.#rootObserver = null
     this.#composerObserver?.disconnect()
     this.#composerObserver = null
+    this.#composerObserverTarget = null
     this.#marqueeRO?.disconnect()
     this.#marqueeRO = null
     // Leave the model label as the stock ellipsis render (no marquee trail).
@@ -398,15 +398,19 @@ export class MobileController implements MobileControllerHandle {
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#foregroundTimer, this.#marqueeFrame, this.#taskStatusFrame]) {
-      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#foregroundTimer, this.#taskStatusFrame]) {
+      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#taskStatusFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
+    // marqueeFrame may be a rAF id (number) or a sentinel 1 (cooldown pending); marqueeTimer is a setTimeout id.
+    if (this.#marqueeFrame !== null && this.#marqueeFrame !== 1) cancelAnimationFrame(this.#marqueeFrame)
+    if (this.#marqueeTimer !== null) window.clearTimeout(this.#marqueeTimer)
     this.#keyboardFrame = null
     this.#mountFrame = null
     this.#resizeTimer = null
     this.#settleTimer = null
     this.#foregroundTimer = null
     this.#marqueeFrame = null
+    this.#marqueeTimer = null
     this.#taskStatusFrame = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
@@ -674,6 +678,23 @@ export class MobileController implements MobileControllerHandle {
    * switches rebuild the scroll body), so the clock always watches the
    * visible conversation.
    */
+  /** Re-attach the composer observer to the current composer card (narrow
+   *  scope). The card mounts/unmounts with the session skeleton, so we
+   *  re-resolve it when the root mutates. Watching only the card subtree
+   *  avoids firing on every conversation text-node mutation during streaming. */
+  readonly #rebindComposerObserver = (): void => {
+    const card = document.querySelector('[data-composer-card]')
+    if (card === null || card === this.#composerObserverTarget) return
+    this.#composerObserver?.disconnect()
+    this.#composerObserverTarget = card
+    this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync() })
+    this.#composerObserver.observe(card, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    })
+  }
+
   readonly #ensureConversationActivityObserver = (): void => {
     const target = document.querySelector('[data-conversation-scroll]')
     if (target === null || target === this.#conversationTarget) return
@@ -857,14 +878,31 @@ export class MobileController implements MobileControllerHandle {
     html.style.setProperty('--dshm-keyboard-inset', `${inset}px`)
   }
 
-  /** Model-name marquee: re-measure on the next frame (mutation streams
-   *  can fire every frame while tokens stream). Skip when the tab is
-   *  backgrounded — the CSS animation is paused and measuring is wasted. */
+  /** Model-name marquee: re-measure with a 500ms cooldown between measures.
+   *  During streaming, characterData mutations fire every frame; the old
+   *  rAF-throttle still triggered ~60 DOM reads/sec. A 500ms cooldown keeps
+   *  the initial mount snappy (rAF) while cutting streaming overhead by ~97%. */
   readonly #requestMarqueeSync = (): void => {
     if (this.#marqueeFrame !== null) return
+    const now = Date.now()
+    const elapsed = now - this.#lastMarqueeSyncAt
+    if (elapsed < 500) {
+      // Defer the remaining time; if a timer is already pending, skip.
+      if (this.#marqueeTimer !== null) return
+      this.#marqueeTimer = window.setTimeout(() => {
+        this.#marqueeTimer = null
+        this.#marqueeFrame = null
+        if (this.#html?.hasAttribute('data-dshm-hidden')) return
+        this.#lastMarqueeSyncAt = Date.now()
+        this.#syncMarquee()
+      }, 500 - elapsed)
+      this.#marqueeFrame = 1 // non-null sentinel
+      return
+    }
     this.#marqueeFrame = requestAnimationFrame(() => {
       this.#marqueeFrame = null
       if (this.#html?.hasAttribute('data-dshm-hidden')) return
+      this.#lastMarqueeSyncAt = Date.now()
       this.#syncMarquee()
     })
   }

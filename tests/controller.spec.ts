@@ -335,6 +335,7 @@ describe('MobileController model-name marquee', () => {
   }
 
   it('tags the overflowing label, wraps the text in the transform layer and paces the slide', () => {
+    vi.useFakeTimers()
     stubMatchMedia(true)
     const ro = stubResizeObserver()
     // Sync rAF that leaves no frame id behind: the controller gates on
@@ -368,14 +369,18 @@ describe('MobileController model-name marquee', () => {
     // restores the stock ellipsis render.
     Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 90 })
     ro.fire()
+    // Advance past the 500ms marquee cooldown so the deferred re-sync fires.
+    vi.advanceTimersByTime(500)
     expect(label.hasAttribute('data-dshm-marquee')).toBe(false)
     expect(label.style.getPropertyValue('--dshm-marquee-duration')).toBe('')
     expect((label.firstElementChild?.hasAttribute('data-dshm-marquee-runner') ?? false)).toBe(false)
     expect(label.textContent).toBe('DeepSeek-V4-Flash')
     controller.dispose()
+    vi.useRealTimers()
   })
 
-  it('picks up a composer that mounts after the controller', () => {
+  it('picks up a composer that mounts after the controller', async () => {
+    vi.useFakeTimers()
     stubMatchMedia(true)
     stubResizeObserver()
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -390,15 +395,13 @@ describe('MobileController model-name marquee', () => {
     Object.defineProperty(label, 'scrollWidth', { configurable: true, value: 200 })
     Object.defineProperty(label, 'clientWidth', { configurable: true, value: 112 })
     // The composer mutation is delivered async by the MutationObserver
-    // (microtask), then the throttled sync runs on the stub rAF.
-    return new Promise<void>((resolve) => {
-      setTimeout(() => {
-        expect(label.dataset.dshmMarquee).toBe('')
-        expect(label.firstElementChild?.getAttribute('data-dshm-marquee-runner')).toBe('')
-        expect(frame.scrollLeft).toBe(300)
-        resolve()
-      }, 0)
-    })
+    // (microtask); flush microtasks then advance past the 500ms cooldown.
+    await vi.advanceTimersByTimeAsync(500)
+    expect(label.dataset.dshmMarquee).toBe('')
+    expect(label.firstElementChild?.getAttribute('data-dshm-marquee-runner')).toBe('')
+    expect(frame.scrollLeft).toBe(300)
+    controller.dispose()
+    vi.useRealTimers()
   })
 
   it('removes every marquee marker and unwraps the runner on dispose', () => {
