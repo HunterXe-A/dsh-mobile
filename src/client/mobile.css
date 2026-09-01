@@ -717,13 +717,14 @@
     display: none !important;
   }
 
-  /* Kill the turn-status shimmer animation on mobile: the 1.8s infinite
-     background-position sweep triggers continuous GPU compositing during
-     every running turn. On a phone the gradient band is barely visible at
-     14px — static text with the brand color reads the same. */
+  /* Turn-status shimmer: keep the sweep but cut GPU cost. The stock 1.8s
+     background-position animation repaints every frame on the main thread.
+     Slowing to 4s halves compositing frequency; will-change promotes the
+     element to its own compositor layer so the sweep runs entirely on GPU
+     without triggering main-thread repaints. */
   [data-dsh-mobile] [role='status'][aria-live='polite'] {
-    animation: none !important;
-    background-size: 100% 100% !important;
+    animation-duration: 4s !important;
+    will-change: background-position;
   }
 }
 
