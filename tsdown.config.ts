@@ -19,17 +19,15 @@ const PLUGIN_ID = '@dsh-external/dsh-mobile'
 
 /** Module specifiers the dsh web shell shares into its frozen module table. */
 const PLATFORM_MODULES = [
-  'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', 'cordis',
+  'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-schema-form',
 ] as const
 
 /** Externals resolved from the loader module table. */
 const CLIENT_EXTERNALS: readonly string[] = [
   ...PLATFORM_MODULES,
-  '@deepseek-ai/dsh-client-runtime/client',
   '@deepseek-ai/dsh-client-ui-layout/client',
 ]
 

@@ -452,7 +452,10 @@ export class MobileController implements MobileControllerHandle {
    * the user is composing, and only once per page load.
    */
   readonly #onVisibilityChange = (): void => {
-    if (document.visibilityState !== 'visible') return
+    // Toggle data-dshm-hidden so CSS can pause animations when tab is backgrounded.
+    const hidden = document.visibilityState !== 'visible'
+    this.#html?.toggleAttribute('data-dshm-hidden', hidden)
+    if (hidden) return
     if (this.#foregroundTimer !== null) return
     this.#foregroundTimer = window.setTimeout(() => {
       this.#foregroundTimer = null
@@ -855,11 +858,13 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Model-name marquee: re-measure on the next frame (mutation streams
-   *  can fire every frame while tokens stream). */
+   *  can fire every frame while tokens stream). Skip when the tab is
+   *  backgrounded — the CSS animation is paused and measuring is wasted. */
   readonly #requestMarqueeSync = (): void => {
     if (this.#marqueeFrame !== null) return
     this.#marqueeFrame = requestAnimationFrame(() => {
       this.#marqueeFrame = null
+      if (this.#html?.hasAttribute('data-dshm-hidden')) return
       this.#syncMarquee()
     })
   }
@@ -987,11 +992,14 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Coalesce task-status syncs to one per frame (mutation streams can fire
-   *  every frame while tokens stream). */
+   *  every frame while tokens stream). Skip when backgrounded — the dots
+   *  animation (setInterval) is the only visible output and it already
+   *  checks for the status element. */
   readonly #requestTaskStatusSync = (): void => {
     if (this.#taskStatusFrame !== null) return
     this.#taskStatusFrame = requestAnimationFrame(() => {
       this.#taskStatusFrame = null
+      if (this.#html?.hasAttribute('data-dshm-hidden')) return
       this.#syncTaskStatus()
     })
   }
@@ -1102,6 +1110,9 @@ export class MobileController implements MobileControllerHandle {
   readonly #ensureTaskStatusDots = (): void => {
     if (this.#taskStatusDotTimer !== null) return
     this.#taskStatusDotTimer = window.setInterval(() => {
+      // Skip rendering when backgrounded — CSS animations are paused and the
+      // DOM work is wasted.
+      if (this.#html?.hasAttribute('data-dshm-hidden')) return
       const status = this.#taskStatusElement
       const target = this.#conversationTarget
       const alive = (status !== null && status.isConnected)

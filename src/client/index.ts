@@ -11,17 +11,18 @@
  * renders completely untouched, and the pager starts on the chat page —
  * swiping reveals the always-open sidebar.
  */
-import type { ClientContext, ConversationEventInput, ConversationEventRegistry, ConversationMatch, ConversationNodeContext, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only: pulls the layout plugin's Context merge (ctx.layout) and the
-// sessions service surface into this compilation unit.
+import type { Context } from '@deepseek-ai/cordis'
+import type { ConversationMatch, ConversationNodeContext, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
+// Type-only: pulls the layout plugin's Context merge (ctx.layout), the
+// sessions service, and the conversation event registry into this compilation unit.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-runtime/client'
 import { MobileController } from './controller.ts'
 // Plugin-owned global mobile sheet (injected as a <style data-plugin> tag).
 import './mobile.css'
 
 /** Services required by the mobile plugin. */
-export const inject = ['layout', 'sessions', 'conversationEvents']
+export const inject = ['layout', 'sessions', 'uiConversation']
 
 /**
  * Probe the live compaction lifecycle (automatic AND /compact) off the
@@ -32,14 +33,13 @@ export const inject = ['layout', 'sessions', 'conversationEvents']
  * location data, nothing rendered; it just flips the controller's
  * compaction flag (compaction/start → true, compaction/end → false).
  * `compaction/summary` keeps the flag up (it precedes the end event).
- * @param events - conversation event registry service.
  * @param controller - DOM controller driving the status label.
  * @returns the registration disposer for the effect teardown.
  */
-function registerCompactionProbe(events: ConversationEventRegistry, controller: MobileController): () => void {
-  return events.register({
+function registerCompactionProbe(ctx: Context, controller: MobileController): () => void {
+  return ctx.uiConversation.events.register({
     kind: 'dshm-task-compaction',
-    match: (event: ConversationEventInput['event']): { id: string, role: 'start' | 'update' } | null => {
+    match: (event: SessionEventLike): { id: string, role: 'start' | 'update' } | null => {
       const type = event.type
       if (type !== 'compaction/start' && type !== 'compaction/end' && type !== 'compaction/summary') return null
       const data = event.data as { compactionId?: unknown }
@@ -65,13 +65,13 @@ function registerCompactionProbe(events: ConversationEventRegistry, controller: 
  * do not move `current` (running flags, titles) leave it alone.
  * @param ctx - Client root context.
  */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: Context): void {
   ctx.effect(() => {
     const controller = new MobileController({
       toggleSidebar: () => ctx.layout.toggleSidebar(),
     })
     controller.mount()
-    const offProbe = registerCompactionProbe(ctx.conversationEvents, controller)
+    const offProbe = registerCompactionProbe(ctx, controller)
     let lastCurrent = ctx.sessions.list.getSnapshot().current
     const off = ctx.sessions.list.subscribe(() => {
       const next = ctx.sessions.list.getSnapshot().current
