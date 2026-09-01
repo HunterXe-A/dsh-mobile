@@ -558,6 +558,36 @@
     display: none;
   }
 
+  /* ---------- session stats line (mobile fit) ----------
+
+     The composer's sessance stats row — "10 轮 · 176 步 | LLM 31m55s ·
+     工具调用 16m33s | 首 token 平均 3.6s · 117 tok/s | 缓存命中 84% |
+     输入 18.3M tok · 输出 150K tok" — is a single nowrap line with a lot
+     of readings. Its module sheet caps it with overflow:hidden +
+     text-overflow:ellipsis, so on phones the longer sessions get clipped
+     to "…" and the numbers are unreachable. The same treatment as the
+     turn tail above: let the line take its full natural width and scroll
+     horizontally (swipe to read the rest), no scrollbar anywhere, and
+     overscroll-behavior:contain so the swipe never chains into the pager
+     flip.
+     Positioning hooks only: the stats row is the composer CARD's direct
+     following sibling (rendered as the InputBar footer right under the
+     card), so `[data-composer-card] + div` selects it without any hashed
+     class. No other element is a direct sibling div after the card in the
+     idle composer — the overlay/preview/toast/notice live inside or above
+     the card, never after it. */
+  [data-dsh-mobile] [data-composer-card] + div {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  [data-dsh-mobile] [data-composer-card] + div::-webkit-scrollbar {
+    display: none;
+  }
+
   /* ---------- session header (mobile fit) ----------
 
      The background-jobs menu anchors left:0 to its trigger's .root seat
