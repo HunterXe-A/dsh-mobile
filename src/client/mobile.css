@@ -558,6 +558,84 @@
     display: none;
   }
 
+  /* ---------- session stats line (mobile fit) ----------
+
+     The composer-dock readout — "10 轮 · 176 步 | LLM 31m55s · 工具调用
+     16m33s | 首 token 平均 3.6s · 117 tok/s | 缓存命中 84% | 输入 18.3M
+     tok · 输出 150K tok" — is ONE nowrap line with overflow:hidden +
+     text-overflow:ellipsis (stock StatsLine): on phones the tail readings
+     are ellipsized away with NO way to reveal them — the stock Tooltip
+     that would show the full line is hover/focus-only, dead on touch.
+     Same fix as the message tail clock above: the line itself scrolls
+     horizontally — swipe to see the rest, no scrollbar chrome, and
+     overscroll-behavior:contain keeps the swipe from chaining into the
+     pager flip. text-overflow:clip drops the ellipsis, which would keep
+     painting over the scrolled content's edge. The stock
+     text-align:center stays: for inline content in a BLOCK scroll box the
+     scrollable overflow covers both directions (the unsafe-centering trap
+     is a flexbox-only behavior), so a fitting line stays centered while an
+     overflowing one scrolls end to end. The component's own truncation
+     measure (scrollWidth > clientWidth) is unaffected — it only gates the
+     Tooltip.
+
+     WINDOW-CONFINED SCROLL: with plain overflow-x:auto the scrolling
+     text roams the WHOLE element box — the padding is transparent, so
+     glyphs ride all the way out to the element edge ("到顶") while the
+     resting end keeps its inset gap: the scroll area is visibly bigger
+     than the area the stock line ever displayed in, and the two ends
+     can never look alike. The fix is to confine the scroll to the
+     ORIGINAL display window — the content box inside the stock padding
+     (clearance+16px each side, the column the composer text aligns to):
+     a mask keeps both padding zones permanently EMPTY and clips the
+     scrolling text exactly at those boundaries, at every scroll
+     position. The geometry works out exactly: the scrollable overflow
+     includes the padding, so at either scroll limit the text's
+     start/end ink lands precisely ON the window boundary — no dead
+     overshoot, and the resting text is never under the mask's
+     transparent zone, so nothing fully visible is ever dimmed (no
+     fade ramps anywhere — earlier fade/scroll-driven attempts treated
+     the symptom and were removed). text-align:center stays: a fitting
+     line still centers (its glyphs sit inside the opaque window
+     untouched), an overflowing one scrolls within it. mask-image is
+     anchored to the element box (it does not scroll with the content),
+     which is exactly the behavior wanted; the var() carries a 0px
+     fallback so an undefined clearance degrades to a plain 16px inset
+     rather than dropping the declaration. Both mask-image spellings
+     are written out — iOS Safari still requires the -webkit- prefix.
+     Keyed off the slot anchor, never the hashed class: the
+     conversation.composer.dock outlet (a display:contents div) has exactly
+     one shipped occupant — StatsLine, id 'stats', order 0 — and Tooltip
+     cloneElements its child (no wrapper node), so the readout div is the
+     outlet's first child element. todo/queue strips live in the SIBLING
+     conversation.input.dock slot and can never match. */
+
+  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div:first-child {
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    -webkit-mask-image: linear-gradient(to right,
+      transparent 0,
+      transparent calc(var(--dsh-composer-side-clearance, 0px) + 16px),
+      #000 calc(var(--dsh-composer-side-clearance, 0px) + 16px),
+      #000 calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
+      transparent calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
+      transparent 100%);
+    mask-image: linear-gradient(to right,
+      transparent 0,
+      transparent calc(var(--dsh-composer-side-clearance, 0px) + 16px),
+      #000 calc(var(--dsh-composer-side-clearance, 0px) + 16px),
+      #000 calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
+      transparent calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
+      transparent 100%);
+  }
+
+  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div:first-child::-webkit-scrollbar {
+    display: none;
+  }
+
   /* ---------- session header (mobile fit) ----------
 
      The background-jobs menu anchors left:0 to its trigger's .root seat
