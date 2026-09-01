@@ -716,6 +716,15 @@
   [data-dsh-mobile] [data-slot='conversation.session.header.utilities'] button > span {
     display: none !important;
   }
+
+  /* Kill the turn-status shimmer animation on mobile: the 1.8s infinite
+     background-position sweep triggers continuous GPU compositing during
+     every running turn. On a phone the gradient band is barely visible at
+     14px — static text with the brand color reads the same. */
+  [data-dsh-mobile] [role='status'][aria-live='polite'] {
+    animation: none !important;
+    background-size: 100% 100% !important;
+  }
 }
 
 /* Coarse pointers (touch) never hover: drop scrollbars entirely. */
