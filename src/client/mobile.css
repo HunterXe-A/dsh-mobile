@@ -717,14 +717,6 @@
     display: none !important;
   }
 
-  /* Turn-status shimmer: the stock 1.8s background-position animation
-     repaints every frame on the main thread. Override with a slower 4s
-     duration — less frequent repaints = less CPU. No will-change: that
-     creates a permanent compositor layer even when the animation is idle,
-     wasting GPU memory. */
-  [data-dsh-mobile] [role='status'][aria-live='polite'] {
-    animation-duration: 4s !important;
-  }
 }
 
 /* Coarse pointers (touch) never hover: drop scrollbars entirely. */
