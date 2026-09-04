@@ -61,7 +61,7 @@ const SIDEBAR_COLLAPSE_LABELS = new Set(['收起侧边栏', 'Collapse sidebar'])
  * the safe-area insets to env().
  */
 const VIEWPORT_CONTENT =
-  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content'
+  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content'
 
 /**
  * The AppFrame keeps at least one of its two data attributes in every state
@@ -239,6 +239,11 @@ export class MobileController implements MobileControllerHandle {
   #conversationObserver: MutationObserver | null = null
   #conversationTarget: Element | null = null
   #lastActivityAt = 0
+  /** Locked body height captured before the keyboard opens. With
+   *  interactive-widget=resizes-content, 100dvh shrinks when the keyboard
+   *  opens, compressing the entire layout. We lock the body to the pre-
+   *  keyboard height so only the composer seat adjusts via padding. */
+  #lockedBodyHeight = -1
 
   /** @param options - apply-world callbacks. */
   constructor(options: MobileControllerOptions) {
@@ -730,6 +735,21 @@ export class MobileController implements MobileControllerHandle {
       ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
       : 0
     html.style.setProperty('--dshm-keyboard-inset', `${inset}px`)
+
+    // Lock body height: with interactive-widget=resizes-content, 100dvh
+    // shrinks when the keyboard opens, compressing the entire layout. We
+    // pin the body to the pre-keyboard height so only the composer seat
+    // adjusts via padding.
+    const body = document.body
+    if (inset > 0) {
+      if (this.#lockedBodyHeight < 0) {
+        this.#lockedBodyHeight = body.offsetHeight
+      }
+      body.style.height = `${this.#lockedBodyHeight}px`
+    } else {
+      this.#lockedBodyHeight = -1
+      body.style.height = ''
+    }
   }
 
   /** Model-name marquee: re-measure on the next frame (mutation streams
