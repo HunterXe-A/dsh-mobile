@@ -81,19 +81,15 @@
    `100%` resolves against the body content box in BOTH cases: with the host
    padding it is the remaining height; in a plain PWA body itself is 100dvh,
    so the root fills the viewport the same way. Browsers without dvh get the
-   same 100%/100vh pairing from the fallback below. The 100vh fallback must
-   come FIRST and the @supports(100dvh) override AFTER: both rules share the
-   same specificity, so the cascade picks the later one — if the dvh block
-   precedes the fallback, the fallback always wins and the dynamic viewport
-   fix never applies. */
+   same 100%/100vh pairing from the fallback below.
+
+   NOTE: We deliberately skip the 100dvh override for [data-dsh-mobile].
+   On Android Chrome, 100dvh shrinks when the virtual keyboard opens,
+   which compresses the entire layout and pushes the dialog too high.
+   Using 100vh keeps the body stable across keyboard open/close — only
+   the composer seat's --dshm-keyboard-inset padding adjusts. */
 [data-dsh-mobile] body {
   height: 100vh;
-}
-
-@supports (height: 100dvh) {
-  [data-dsh-mobile] body {
-    height: 100dvh;
-  }
 }
 
 [data-dsh-mobile] #root {
