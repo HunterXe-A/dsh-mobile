@@ -30,25 +30,25 @@ export type MobilePage = 'sidebar' | 'chat'
 /** Wait after the last scroll event before the pager settles. */
 const SCROLL_SETTLE_MS = 200
 
-/**
- * Mobile browsers suspend the page's streaming fetch while the tab is in the
- * background (iOS Safari and Android Chrome both throttle/hold SSE reads).
- * The connection layer only reconnects when the stream actually fails, so a
- * suspended-but-alive stream never recovers by itself: frames emitted while
- * hidden are lost, pending approvals can be settled server-side (cancelled)
- * with the panel still mounted or the panel never replayed, and the UI stays
- * stale after returning. DSH exposes no reconnect hook, so the controller
- * performs a guarded foreground recovery: when a running session shows no
- * DOM activity shortly after returning to the foreground, it reloads the
- * page — a fresh boot replays history and the server replays unanswered
- * pending approvals on mux open (dsh-host-apiproxy mux-open replay).
- */
-/** How long after returning to the foreground to wait before judging the stream (lets buffered frames / auto-reconnect settle first). */
-const FOREGROUND_CHECK_DELAY_MS = 1800
-/** A running session with no DOM activity for this long is judged dead (no streaming frames, no status changes). */
-const FOREGROUND_QUIET_MS = 1500
-/** sessionStorage key remembering that the current page load already did a recovery reload (stops reload loops). */
-const RECOVERY_STAMP_KEY = 'dshm:recovered-load'
+/** Poll interval for the return-to-chat smoother. The smooth scroll is only
+ *  re-issued when it is actually STALLED (scrollLeft stopped advancing),
+ *  never pre-empted while it is in flight — so a retry reads as a natural
+ *  continuation, and the pager is never snapped to the chat page. */
+const SMOOTH_RETRY_MS = 160
+
+/** Window (ms) after a session pick during which automatic focus into the
+ *  composer is bounced back out: picking a session in the sidebar lands
+ *  focus on the input, which pops the OS keyboard over the pager's smooth
+ *  return-to-chat. On phones the keyboard must not open until the user
+ *  actually taps the input — the focus is suppressed (blurred) during this
+ *  window, so the return scroll runs undisturbed. */
+const FOCUS_SUPPRESS_MS = 600
+
+/** A focusin is judged "the user's own tap" only when a pointerdown landed
+ *  on the same element within this recent window (a real tap intent).
+ *  Older pointerdowns (e.g. the session row the user just tapped) must not
+ *  count. */
+const POINTER_ALLOW_MS = 500
 
 /** The sidebar shell's collapse toggle labels (zh / en) — clicking it while
  *  the sidebar is expanded must NOT collapse it to the rail (which would
@@ -58,14 +58,10 @@ const SIDEBAR_COLLAPSE_LABELS = new Set(['收起侧边栏', 'Collapse sidebar'])
 /**
  * Viewport meta content: maximum-scale blocks the iOS focus zoom that would
  * otherwise fight the fixed-height mobile layout; viewport-fit=cover exposes
- * the safe-area insets to env(). interactive-widget=resizes-content makes
- * Android-WebView/Chrome shrink the layout viewport when the OS keyboard
- * opens, so the sticky composer seat re-anchors to the keyboard top instead
- * of staying behind it (iOS ignores this property; there the visualViewport
- * math in #updateKeyboardInset handles the lift).
+ * the safe-area insets to env().
  */
 const VIEWPORT_CONTENT =
-  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content'
+  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
 
 /**
  * The AppFrame keeps at least one of its two data attributes in every state
@@ -115,8 +111,8 @@ const MARQUEE_GAP_PX = 32
  * (automatic or /compact) wins over every tool label (压缩中): the live flag
  * is driven by the conversationEvents compaction probe (registerCompactionProbe
  * in index.ts), with the running /compact card in the DOM as a fallback while
- * the event stream is not connected. The card's OWN stock summary (正在压
- * 缩…) is rewritten to the same cute label, animating with the same trailing
+ * the event stream is not connected. The card's OWN stock summary (正在压缩…)
+ * is rewritten to the same cute label, animating with the same trailing
  * dots even when no turn-status element exists (a /compact-only run).
  */
 const TASK_STATUS_SELECTOR = '[role="status"][aria-live="polite"]'
@@ -223,14 +219,26 @@ export class MobileController implements MobileControllerHandle {
   #mountFrame: number | null = null
   #resizeTimer: number | null = null
   #settleTimer: number | null = null
-  #foregroundTimer: number | null = null
-  #lastActivityAt = 0
-  #foregroundReloaded = false
-  #conversationObserver: MutationObserver | null = null
-  #conversationTarget: Element | null = null
+  #returnTimer: number | null = null
+  /** Last seen window.innerWidth — the resize handler only re-anchors the
+   *  pager when the WIDTH changed (rotation / split-screen reflows the page
+   *  tracks). A height-only resize (OS keyboard pop, URL bar collapse) must
+   *  never touch scrollLeft: re-anchoring there can cancel the smooth
+   *  return-to-chat that a session pick just started. */
+  #lastInnerWidth = -1
+  /** Timestamp until which automatic focus into the composer is kicked back
+   *  out (see FOCUS_SUPPRESS_MS). */
+  #focusSuppressUntil = -1
+  /** The most recent pointerdown target + time, used to tell the user's own
+   *  tap on the composer from the app's automatic focus. */
+  #lastPointerTarget: Element | null = null
+  #lastPointerAt = -1
   #expandPending = false
   #mounted = false
   #disposed = false
+  #conversationObserver: MutationObserver | null = null
+  #conversationTarget: Element | null = null
+  #lastActivityAt = 0
 
   /** @param options - apply-world callbacks. */
   constructor(options: MobileControllerOptions) {
@@ -246,7 +254,16 @@ export class MobileController implements MobileControllerHandle {
   /** Return to the chat page (a session picked in the sidebar). Pure scroll —
    *  the sidebar state is untouched, so its content stays rendered. */
   returnToChat(): void {
-    this.#placeOnChat('smooth')
+    // On phones, picking a session must NOT pop the OS keyboard: the app
+    // auto-focuses the composer, and that keyboard would cover the pager's
+    // smooth return-to-chat (and usually stalls it). Enter the focus
+    // suppression window on mobile only — the desktop behavior (focus the
+    // input after a session pick) stays untouched because the desktop
+    // still wants to type straight away.
+    if (this.#mql?.matches ?? false) {
+      this.#focusSuppressUntil = Date.now() + FOCUS_SUPPRESS_MS
+    }
+    this.#redirectToChat()
   }
 
   /** Drive the live compaction flag: the conversationEvents probe calls this
@@ -255,10 +272,42 @@ export class MobileController implements MobileControllerHandle {
   setTaskCompacting(active: boolean): void {
     if (this.#disposed || this.#taskCompacting === active) return
     this.#taskCompacting = active
-    // Immediate: the pill must exist/ vanish with the flag, not a frame
-    // later (the probe is the only authority on automatic compaction).
     this.#syncCompactingIndicator()
     this.#requestTaskStatusSync()
+  }
+
+  /** Smoothly scroll the pager back to the chat page. The smooth scroll is
+   *  re-issued ONLY when it is genuinely stalled (scrollLeft stops
+   *  advancing across a poll) — the rare browser/OS cancellation case —
+   *  and every re-issue is also smooth, so the retry never reads as an
+   *  instant jump: the user always sees a natural slide back to the
+   *  session. While the animation is in flight (or has landed) the poll is
+   *  a no-op. */
+  readonly #redirectToChat = (): void => {
+    const frame = findFrame()
+    const mobile = this.#mql?.matches ?? false
+    if (frame === null || !mobile) return
+    const chatLeft = chatPageLeft(frame)
+    if (chatLeft <= 0) return
+    this.#placeOnChat('smooth')
+    if (this.#returnTimer !== null) window.clearTimeout(this.#returnTimer)
+    let last = frame.scrollLeft
+    const poll = (): void => {
+      this.#returnTimer = null
+      const f = findFrame()
+      const mm = this.#mql?.matches ?? false
+      if (f === null || !mm) return
+      const cl = chatPageLeft(f)
+      if (cl <= 0) return
+      if (f.scrollLeft >= cl - 4) return // landed on the chat page
+      if (f.scrollLeft <= last) {
+        // Stalled (not advancing): nudge it along, smoothly — never snap.
+        this.#placeOnChat('smooth')
+      }
+      last = f.scrollLeft
+      this.#returnTimer = window.setTimeout(poll, SMOOTH_RETRY_MS)
+    }
+    this.#returnTimer = window.setTimeout(poll, SMOOTH_RETRY_MS)
   }
 
   /** Install the controller. Safe to call once; a second call is a no-op.
@@ -286,38 +335,44 @@ export class MobileController implements MobileControllerHandle {
 
     // Keep the active page in place when the viewport width changes within
     // a breakpoint side (rotation / split-screen reflows the page tracks).
+    this.#lastInnerWidth = window.innerWidth
     window.addEventListener('resize', this.#onWindowResize)
 
     // A tap on the exposed chat card (while the pager rests on the sidebar
     // page) returns to the chat page — PiUI's overlay behavior.
     document.addEventListener('click', this.#onDocClickCapture, true)
 
-    // Foreground recovery: mobile browsers suspend the streaming fetch while
-    // the tab is hidden and the connection layer never notices, so returning
-    // to the tab can leave the conversation stale and pending approvals lost.
-    // Watch visibility and judge stream liveness shortly after returning.
+    // After a session pick the app auto-focuses the composer textarea; on a
+    // phone that pops the OS keyboard over the pager's return-to-chat.
+    // Record real pointer-downs (the user's own taps) and, during the
+    // post-pick window, blur any focus into the composer that does NOT stem
+    // from one — the user's own tap still focuses (they want to type), the
+    // automatic focus is bounced.
+    document.addEventListener('pointerdown', this.#onPointerDownCapture, true)
+    document.addEventListener('focusin', this.#onFocusInCapture, true)
+
+    // Toggle data-dshm-hidden so CSS can pause animations when tab is backgrounded.
     document.addEventListener('visibilitychange', this.#onVisibilityChange)
 
     const root = document.getElementById('root')
     if (root !== null) {
-      this.#rootObserver = new MutationObserver(() => {
-        this.#ensureFrameObserver()
-        this.#ensureConversationActivityObserver()
-      })
+      this.#rootObserver = new MutationObserver(() => { this.#ensureFrameObserver(); this.#ensureConversationActivityObserver() })
       // subtree: the session view is mounted deep inside #root (the start
       // screen and an opened session swap the conversation scroll body), so
       // a top-level childList watch alone would miss the remount and leave
       // the activity/status observers attached to a detached node.
       this.#rootObserver.observe(root, { childList: true, subtree: true })
       // The composer mounts/unmounts with the session skeleton and the
-      // model name swaps in place: re-measure on mutations (rAF-throttled).
+      // model name swaps in place: any subtree change can move the label's
+      // overflow state, so re-measure on every mutation (rAF-throttled —
+      // the check is one querySelector + two reads, cheap even while
+      // streaming tokens mutate the tree every frame).
       this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync() })
       this.#composerObserver.observe(root, {
         childList: true,
         subtree: true,
         characterData: true,
       })
-      this.#requestMarqueeSync()
     }
     // Layout-only overflow changes (row squeeze, font load) do not mutate
     // the tree: watch the label's box too. jsdom has no ResizeObserver, so
@@ -395,16 +450,18 @@ export class MobileController implements MobileControllerHandle {
     window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
     window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
+    document.removeEventListener('pointerdown', this.#onPointerDownCapture, true)
+    document.removeEventListener('focusin', this.#onFocusInCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#foregroundTimer, this.#marqueeFrame, this.#taskStatusFrame]) {
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer, this.#taskStatusFrame]) {
       if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#keyboardFrame = null
     this.#mountFrame = null
     this.#resizeTimer = null
     this.#settleTimer = null
-    this.#foregroundTimer = null
     this.#marqueeFrame = null
+    this.#returnTimer = null
     this.#taskStatusFrame = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
@@ -438,163 +495,6 @@ export class MobileController implements MobileControllerHandle {
     this.#viewportMeta = meta
   }
 
-  /**
-   * Foreground recovery entry: a mobile browser suspends the streaming
-   * fetch while hidden, and the connection layer only reconnects when the
-   * stream actually fails — a suspended-but-alive stream never resumes on
-   * its own. Returning to the tab therefore needs a liveness check: if a
-   * session is still running but nothing has mutated the DOM recently, the
-   * stream is dead and the only reliable recovery DSH offers is a fresh
-   * boot (history backfill + server-side pending-approval replay on mux
-   * open). Guard rails keep the reload rare and safe: it never fires while
-   * the user is composing, and only once per page load.
-   */
-  readonly #onVisibilityChange = (): void => {
-    // Toggle data-dshm-hidden so CSS can pause animations when tab is backgrounded.
-    const hidden = document.visibilityState !== 'visible'
-    this.#html?.toggleAttribute('data-dshm-hidden', hidden)
-    if (hidden) return
-    if (this.#foregroundTimer !== null) return
-    this.#foregroundTimer = window.setTimeout(() => {
-      this.#foregroundTimer = null
-      this.#checkForegroundRecovery()
-    }, FOREGROUND_CHECK_DELAY_MS)
-  }
-
-  /** The recovery judge — everything must line up or nothing happens.
-   *  Two failure modes are repaired:
-   *  1. Suspended stream: a running session with no DOM activity for
-   *     FOREGROUND_QUIET_MS is judged dead (frames emitted while hidden
-   *     were lost and the connection layer never reconnects a suspended
-   *     stream). Reload backfills history.
-   *  2. Lost approval panel: on reconnect the server replays pending
-   *     approvals on mux open, but the client's resync() clears its
-   *     pending map AFTER those replay frames arrive — the panel is
-   *     rendered (flash) then dropped, and no second replay ever comes.
-   *     If history still shows an unanswered approval/asked while no
-   *     panel is mounted, the panel was lost: reload replays it.
-   */
-  readonly #checkForegroundRecovery = (): void => {
-    // Phone layout only; the desktop shell has no suspended-stream problem.
-    if (!(this.#mql?.matches ?? false)) return
-    // One recovery per page load (sessionStorage survives the reload, so
-    // the freshly booted page never immediately reloads itself again).
-    if (sessionStorage.getItem(RECOVERY_STAMP_KEY) === '1') return
-    // Never reload over the user's draft: if the composer holds text or
-    // focus, the stream may be fine and we would destroy work.
-    if (this.#composerHoldsInput()) return
-    void this.#probeAndRecover()
-  }
-
-  /** Async recovery probe: pending-approval lookup and the DOM-clock stream
-   *  check, then the reload decision. Never throws into the UI (fetch
-   *  failures just abort the probe — the stream check below still runs on
-   *  the DOM clock). */
-  readonly #probeAndRecover = async (): Promise<void> => {
-    try {
-      const list = await this.#rpc('session.list', {})
-      const sessions: Array<{ sessionId?: unknown; running?: boolean }> = list?.items ?? []
-      if (sessions.length === 0) return
-      // Approval-loss repair: a running session holding an unanswered
-      // approval whose panel is NOT mounted lost its panel to the reconnect
-      // replay race (mux re-open replays approval/requested, then the
-      // client's resync clears its pending map — the panel flashes and
-      // drops, and no second replay ever comes). Note a session waiting on
-      // approval does NOT show the sidebar ongoing marker, so this check
-      // must not depend on the selected row's data-state. The only way back
-      // is a fresh boot (mux open replays the pending approval again).
-      for (const session of sessions) {
-        if (session.running !== true) continue
-        const sessionId = typeof session.sessionId === 'string' ? session.sessionId : ''
-        if (sessionId === '') continue
-        const history = await this.#rpc('session.history', { sessionId, maxMessages: 200 })
-        const events: Array<{ event?: { type?: string; data?: { id?: string } } }> = history?.events ?? []
-        const decidedIds = new Set(
-          events.filter((e) => e.event?.type === 'approval/decided').map((e) => e.event?.data?.id),
-        )
-        const unanswered = events.some(
-          (e) => e.event?.type === 'approval/asked' && !decidedIds.has(e.event?.data?.id),
-        )
-        if (!unanswered) continue
-        if (document.querySelector('[data-approval-key]') === null) {
-          this.#recoverReload()
-          return
-        }
-        return // panel is mounted — the approval is live, nothing to repair
-      }
-      // Suspended-stream repair: the SELECTED sidebar row's activity svg
-      // (data-state="ongoing") proves the user is watching a running
-      // session. Only the selected row counts: a background running session
-      // elsewhere in the tree must never trigger a reload while the user is
-      // looking at another session. Silence for FOREGROUND_QUIET_MS while
-      // running means the stream is not delivering (token deltas/status
-      // flips mutate the DOM constantly while it is).
-      const selectedRow = document.querySelector('[role="treeitem"][aria-selected="true"]')
-      if (selectedRow === null) return
-      if (selectedRow.querySelector('[data-state="ongoing"]') === null) return
-      if (Date.now() - this.#lastActivityAt < FOREGROUND_QUIET_MS) return
-      this.#recoverReload()
-    } catch {
-      // Probe failed (network hiccup); no repair attempt this time.
-    }
-  }
-
-  /** One-shot RPC against the same-origin harness API (probe only). */
-  readonly #rpc = async (method: string, payload: Record<string, unknown>): Promise<any> => {
-    const res = await fetch(`/api/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'client-request',
-        rpcId: `dshm-probe-${Math.random().toString(36).slice(2)}`,
-        method,
-        payload,
-      }),
-    })
-    const json = (await res.json()) as { result?: { value?: unknown } }
-    return json?.result?.value ?? null
-  }
-
-  /** The actual recovery: stamp the loop guard and reload. */
-  readonly #recoverReload = (): void => {
-    try {
-      sessionStorage.setItem(RECOVERY_STAMP_KEY, '1')
-    } catch {
-      // Storage unavailable: still recover once (the in-memory flag below
-      // stops the loop for this load).
-    }
-    this.#foregroundReloaded = true
-    location.reload()
-  }
-
-  /** True while the user is actually composing (never reload over a draft
-   *  or an open keyboard). Mere focus does NOT count — the app auto-focuses
-   *  the input on session open, so focus alone would block recovery every
-   *  time. Real composition signals: non-empty draft text, or the OS
-   *  keyboard visibly occupying the layout (visualViewport compressed on
-   *  iOS; layout viewport compressed under interactive-widget=resizes-content
-   *  on Android). */
-  readonly #composerHoldsInput = (): boolean => {
-    const card = document.querySelector('[data-composer-card]')
-    if (card === null) return false
-    const editable = card.querySelector<HTMLElement | HTMLTextAreaElement>(
-      '[contenteditable="true"], textarea',
-    )
-    if (editable !== null) {
-      const text = editable instanceof HTMLTextAreaElement ? editable.value : editable.textContent ?? ''
-      if (text.trim() !== '') return true
-    }
-    // Keyboard detection: a visual viewport at least ~120px shorter than the
-    // layout viewport means the OS keyboard is up (iOS); on Android with
-    // interactive-widget=resizes-content the LAYOUT viewport itself shrinks
-    // by the keyboard inset. Both are far larger than any anti-bounce
-    // address-bar jitter.
-    const vv = window.visualViewport
-    if (vv !== null && vv.height < window.innerHeight - 120) return true
-    if (window.innerHeight < (window.screen.availHeight ?? window.innerHeight) - 120) return true
-    return false
-  }
-
   /** The always-open phone layout expands the docked sidebar once when the
    *  viewport crosses into the mobile breakpoint (AppFrame auto-collapses
    *  it to the rail there). The request is idempotent: repeated calls while
@@ -621,14 +521,6 @@ export class MobileController implements MobileControllerHandle {
     if (frame === null || !mobile) return
     const chatLeft = chatPageLeft(frame)
     if (chatLeft <= 0) return
-    // Cancel any pending settle that could fight this scroll (e.g. user
-    // taps a session while the pager is still mid-swipe: settle would
-    // re-snap to the sidebar because the smooth scroll hasn't crossed
-    // the midpoint yet).
-    if (this.#settleTimer !== null) {
-      window.clearTimeout(this.#settleTimer)
-      this.#settleTimer = null
-    }
     if (Math.abs(frame.scrollLeft - chatLeft) > 2) {
       frame.scrollTo({ left: chatLeft, behavior })
     }
@@ -672,34 +564,6 @@ export class MobileController implements MobileControllerHandle {
     this.#ensureConversationActivityObserver()
   }
 
-  /**
-   * Attach the foreground-recovery liveness clock to the MESSAGE AREA only.
-   * Streaming token deltas, new blocks and status flips all mutate the
-   * conversation scroll body; sidebar housekeeping and composer chrome do
-   * not. The target is re-resolved whenever the root mutates (session
-   * switches rebuild the scroll body), so the clock always watches the
-   * visible conversation.
-   */
-  readonly #ensureConversationActivityObserver = (): void => {
-    const target = document.querySelector('[data-conversation-scroll]')
-    if (target === null || target === this.#conversationTarget) return
-    this.#conversationObserver?.disconnect()
-    this.#conversationTarget = target
-    this.#conversationObserver = new MutationObserver(() => {
-      this.#lastActivityAt = Date.now()
-      this.#requestTaskStatusSync()
-    })
-    this.#lastActivityAt = Date.now()
-    this.#conversationObserver.observe(target, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ['data-state', 'data-tool', 'data-sample'],
-    })
-    this.#syncTaskStatus()
-  }
-
   /** Crossing the breakpoint: entering mobile re-expands the sidebar and
    *  places the pager on the chat page; leaving clears the 3D flip vars so
    *  the desktop layout renders flat. */
@@ -711,7 +575,6 @@ export class MobileController implements MobileControllerHandle {
         frame?.style.removeProperty(prop)
       }
       this.#html?.removeAttribute(PAGE_ATTR)
-      this.#html?.removeAttribute('data-dshm-flipping')
       return
     }
     this.#ensureSidebarOpen()
@@ -719,7 +582,11 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Width reflow within one breakpoint side: keep the active page put and
-   *  re-measure the model-name overflow (the row width drives it). */
+   *  re-measure the model-name overflow (the row width drives it). Only a
+   *  WIDTH change re-anchors — a height-only resize (OS keyboard pop, URL
+   *  bar) must never scroll the pager, or it would cancel the smooth
+   *  return-to-chat a session pick just started (the composer's focus
+   *  landing pops the keyboard exactly then). */
   readonly #onWindowResize = (): void => {
     if (this.#resizeTimer !== null) return
     this.#resizeTimer = window.setTimeout(() => {
@@ -727,13 +594,16 @@ export class MobileController implements MobileControllerHandle {
       const frame = findFrame()
       const mobile = this.#mql?.matches ?? false
       if (frame === null || !mobile) return
+      const widthChanged = window.innerWidth !== this.#lastInnerWidth
+      this.#lastInnerWidth = window.innerWidth
+      this.#requestMarqueeSync()
+      if (!widthChanged) return
       const chatLeft = chatPageLeft(frame)
       if (chatLeft <= 0) return
       const onChat = frame.scrollLeft >= chatLeft / 2
       frame.scrollTo({ left: onChat ? chatLeft : 0, behavior: 'auto' })
       this.#mirrorPage(frame)
       this.#updateFlipVars(frame)
-      this.#requestMarqueeSync()
     }, 120)
   }
 
@@ -768,14 +638,6 @@ export class MobileController implements MobileControllerHandle {
     frame.style.setProperty('--dshm-scale', `${1 - abs * 0.06}`)
     frame.style.setProperty('--dshm-offset-x', `${right * right * -48}px`)
     frame.style.setProperty('--dshm-origin-x', `${50 - progress * 50}%`)
-    // Gate the card's 3D context behind [data-dshm-flipping]: at rest the
-    // card must not pin a preserve-3d layer — some mobile engines clip or
-    // fail to paint sticky panels that mount inside it (the approval
-    // "等待审批" / question cards in the composer seat), and a pinned 3D
-    // layer janks the conversation column's scroll. Only a live flip needs
-    // the 3D context for the rotateY/scale to render.
-    if (abs > 0.001) this.#html?.setAttribute('data-dshm-flipping', '')
-    else this.#html?.removeAttribute('data-dshm-flipping')
   }
 
   readonly #settlePager = (): void => {
@@ -791,6 +653,32 @@ export class MobileController implements MobileControllerHandle {
       frame.scrollTo({ left: target, behavior: 'smooth' })
     }
     this.#mirrorPage(frame)
+  }
+
+  /** Record every pointerdown (capture, passive) so the focus-in suppressor
+   *  can distinguish the user's own tap on the composer from the app's
+   *  automatic focus. */
+  readonly #onPointerDownCapture = (event: PointerEvent): void => {
+    const target = event.target
+    this.#lastPointerTarget = target instanceof Element ? target : null
+    this.#lastPointerAt = Date.now()
+  }
+
+  /** During the post-pick window, bounce automatic focus out of the
+   *  composer (the OS keyboard must not cover the return-to-chat). The
+   *  user's OWN tap still focuses: a recent pointerdown on the same element
+   *  (or inside it) means a real intent to type. */
+  readonly #onFocusInCapture = (event: FocusEvent): void => {
+    if (Date.now() > this.#focusSuppressUntil) return
+    const target = event.target
+    if (!(target instanceof HTMLElement)) return
+    if (target.closest('[data-composer-card]') === null) return
+    const pointer = this.#lastPointerTarget
+    const ownTap = pointer !== null
+      && Date.now() - this.#lastPointerAt < POINTER_ALLOW_MS
+      && (pointer === target || target.contains(pointer))
+    if (ownTap) return
+    target.blur()
   }
 
   /** A tap on the exposed chat card returns to the chat page (PiUI's
@@ -814,7 +702,7 @@ export class MobileController implements MobileControllerHandle {
       if (btn !== null && SIDEBAR_COLLAPSE_LABELS.has(btn.getAttribute('aria-label') ?? '')) {
         event.preventDefault()
         event.stopPropagation()
-        this.#placeOnChat('smooth')
+        this.returnToChat()
         return
       }
     }
@@ -822,7 +710,7 @@ export class MobileController implements MobileControllerHandle {
     if (frame.scrollLeft >= chatLeft / 2) return
     const chatCard = frame.children[1]
     if (chatCard instanceof Element && chatCard.contains(target)) {
-      this.#placeOnChat('smooth')
+      this.returnToChat()
     }
   }
 
@@ -838,34 +726,14 @@ export class MobileController implements MobileControllerHandle {
     const html = this.#html
     if (html === null) return
     const vv = window.visualViewport
-    // Adaptive inset: pad only the composer seat's ACTUAL deficit below the
-    // visual viewport bottom, never the full keyboard height. At the old
-    // formula (innerHeight - vv.height - vv.offsetTop) the assumption was
-    // "the sticky seat stays at the layout bottom behind the keyboard", and
-    // the full-keyboard padding lifted the card up from behind it. Browsers
-    // that ALREADY keep the sticky seat above the keyboard (iOS Safari
-    // pushes position:fixed/sticky bottom bars up; Android with
-    // interactive-widget=resizes-content re-anchors the layout) then got
-    // that full-height padding on TOP of the browser's own lift — the card
-    // ended up above the keyboard with a blank gap under it. Measuring the
-    // seat's real bottom vs. the visual viewport bottom yields ~0 on those
-    // platforms (no double lift, no gap) and exactly the keyboard height
-    // where the seat is still stuck behind the keyboard.
-    let inset = 0
-    if (vv !== null && vv.height < window.innerHeight) {
-      const seat = document.querySelector('[data-composer-seat]')
-      const seatBottom = seat !== null
-        ? seat.getBoundingClientRect().bottom + window.scrollY
-        : window.innerHeight
-      const vvBottom = vv.offsetTop + vv.height
-      inset = Math.max(0, seatBottom - vvBottom)
-    }
+    const inset = vv !== null && vv.height < window.innerHeight
+      ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      : 0
     html.style.setProperty('--dshm-keyboard-inset', `${inset}px`)
   }
 
   /** Model-name marquee: re-measure on the next frame (mutation streams
-   *  can fire every frame while tokens stream). Skip when the tab is
-   *  backgrounded — the CSS animation is paused and measuring is wasted. */
+   *  can fire every frame while tokens stream). */
   readonly #requestMarqueeSync = (): void => {
     if (this.#marqueeFrame !== null) return
     this.#marqueeFrame = requestAnimationFrame(() => {
@@ -939,6 +807,39 @@ export class MobileController implements MobileControllerHandle {
         if (original !== null) label.append(original)
       }
     }
+  }
+
+  /** Toggle data-dshm-hidden so CSS can pause animations when tab is backgrounded. */
+  readonly #onVisibilityChange = (): void => {
+    this.#html?.toggleAttribute('data-dshm-hidden', document.visibilityState !== 'visible')
+  }
+
+  /**
+   * Attach the foreground-recovery liveness clock to the MESSAGE AREA only.
+   * Streaming token deltas, new blocks and status flips all mutate the
+   * conversation scroll body; sidebar housekeeping and composer chrome do
+   * not. The target is re-resolved whenever the root mutates (session
+   * switches rebuild the scroll body), so the clock always watches the
+   * visible conversation.
+   */
+  readonly #ensureConversationActivityObserver = (): void => {
+    const target = document.querySelector('[data-conversation-scroll]')
+    if (target === null || target === this.#conversationTarget) return
+    this.#conversationObserver?.disconnect()
+    this.#conversationTarget = target
+    this.#conversationObserver = new MutationObserver(() => {
+      this.#lastActivityAt = Date.now()
+      this.#requestTaskStatusSync()
+    })
+    this.#lastActivityAt = Date.now()
+    this.#conversationObserver.observe(target, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['data-state', 'data-tool', 'data-sample'],
+    })
+    this.#syncTaskStatus()
   }
 
   /** The first running /compact card in the target, or null. The card title
