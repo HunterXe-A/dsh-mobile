@@ -621,6 +621,14 @@ export class MobileController implements MobileControllerHandle {
     if (frame === null || !mobile) return
     const chatLeft = chatPageLeft(frame)
     if (chatLeft <= 0) return
+    // Cancel any pending settle that could fight this scroll (e.g. user
+    // taps a session while the pager is still mid-swipe: settle would
+    // re-snap to the sidebar because the smooth scroll hasn't crossed
+    // the midpoint yet).
+    if (this.#settleTimer !== null) {
+      window.clearTimeout(this.#settleTimer)
+      this.#settleTimer = null
+    }
     if (Math.abs(frame.scrollLeft - chatLeft) > 2) {
       frame.scrollTo({ left: chatLeft, behavior })
     }
