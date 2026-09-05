@@ -278,12 +278,16 @@
     align-items: center;
   }
   /* Match the relocated mode button size/weight to the Chat/Trajectory
-     tabs so they look like a uniform control group. */
+     tabs so they look like a uniform control group. Tab buttons have
+     padding-bottom:11px for the active underline indicator — match it
+     so text baselines align. */
   [data-dsh-mobile] [data-phase='active'] header [role='tablist'] > span {
     font-size: 13px;
     font-weight: 500;
     height: 27px;
-    line-height: 27px;
+    line-height: 16px;
+    padding-bottom: 11px;
+    box-sizing: border-box;
   }
   /* Hide the headerUtilities (session-log button) on mobile: it eats
      title-row space and is a secondary action. */
