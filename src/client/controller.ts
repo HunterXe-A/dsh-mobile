@@ -244,6 +244,10 @@ export class MobileController implements MobileControllerHandle {
    *  opens, compressing the entire layout. We lock the body to the pre-
    *  keyboard height so only the composer seat adjusts via padding. */
   #lockedBodyHeight = -1
+  /** Original parent of the mode button before relocation, used to restore
+   *  on dispose. When null the button has not been relocated. */
+  #modeButtonHome: Element | null = null
+  #modeRelocateFrame: number | null = null
 
   /** @param options - apply-world callbacks. */
   constructor(options: MobileControllerOptions) {
@@ -372,7 +376,7 @@ export class MobileController implements MobileControllerHandle {
       // overflow state, so re-measure on every mutation (rAF-throttled —
       // the check is one querySelector + two reads, cheap even while
       // streaming tokens mutate the tree every frame).
-      this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync() })
+      this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync(); this.#requestModeRelocate() })
       this.#composerObserver.observe(root, {
         childList: true,
         subtree: true,
@@ -458,8 +462,8 @@ export class MobileController implements MobileControllerHandle {
     document.removeEventListener('pointerdown', this.#onPointerDownCapture, true)
     document.removeEventListener('focusin', this.#onFocusInCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer, this.#taskStatusFrame]) {
-      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
+    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer, this.#taskStatusFrame, this.#modeRelocateFrame]) {
+      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame || timer === this.#modeRelocateFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#keyboardFrame = null
     this.#mountFrame = null
@@ -468,6 +472,7 @@ export class MobileController implements MobileControllerHandle {
     this.#marqueeFrame = null
     this.#returnTimer = null
     this.#taskStatusFrame = null
+    this.#modeRelocateFrame = null
     const frame = findFrame()
     if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
     if (this.#viewportMeta !== null) {
@@ -482,6 +487,7 @@ export class MobileController implements MobileControllerHandle {
       html.removeAttribute(PAGE_ATTR)
       html.style.removeProperty('--dshm-keyboard-inset')
     }
+    this.#restoreModeButton()
     this.#html = null
   }
 
@@ -750,6 +756,72 @@ export class MobileController implements MobileControllerHandle {
       this.#lockedBodyHeight = -1
       body.style.height = ''
     }
+  }
+
+  /** Relocate the mode-button (agent preset / "Standard mode") from the
+   *  header title-row into the tabs row, right-aligned. This saves one
+   *  row of vertical header space on mobile. Called rAF-throttled from
+   *  the composer observer. */
+  readonly #requestModeRelocate = (): void => {
+    if (this.#modeRelocateFrame !== null) return
+    this.#modeRelocateFrame = requestAnimationFrame(() => {
+      this.#modeRelocateFrame = null
+      this.#syncModeRelocate()
+    })
+  }
+
+  #syncModeRelocate(): void {
+    if (this.#disposed) return
+    const header = document.querySelector('header[aria-hidden]') ? null
+      : document.querySelector('header')
+    if (header === null) return
+
+    const tablist = header.querySelector<HTMLElement>('[role="tablist"]')
+    const actionsSlot = header.querySelector(
+      '[data-slot="conversation.session.header.actions"]',
+    )
+    if (tablist === null || actionsSlot === null) {
+      // Header has no tabs (hero phase) — restore button if relocated
+      this.#restoreModeButton()
+      return
+    }
+
+    // The mode button is a <span class="…_label"> inside the actions slot.
+    const modeBtn = actionsSlot.querySelector<HTMLElement>(
+      'span[title], button[title]',
+    )
+    if (modeBtn === null || tablist.contains(modeBtn)) return
+
+    // Save original parent for restore on dispose / phase switch.
+    this.#modeButtonHome = modeBtn.parentElement
+
+    // Move to tablist, right-aligned.
+    modeBtn.style.marginLeft = 'auto'
+    modeBtn.style.flexShrink = '0'
+    modeBtn.style.alignSelf = 'center'
+    tablist.appendChild(modeBtn)
+
+    // Hide the now-empty title-row actions cluster.
+    if (this.#modeButtonHome !== null) {
+      ;(this.#modeButtonHome as HTMLElement).style.display = 'none'
+    }
+  }
+
+  #restoreModeButton(): void {
+    if (this.#modeButtonHome === null) return
+    const header = document.querySelector('header')
+    const tablist = header?.querySelector('[role="tablist"]')
+    const modeBtn = tablist?.querySelector<HTMLElement>(
+      'span[title], button[title]',
+    )
+    if (modeBtn !== null && this.#modeButtonHome !== null) {
+      modeBtn.style.removeProperty('margin-left')
+      modeBtn.style.removeProperty('flex-shrink')
+      modeBtn.style.removeProperty('align-self')
+      this.#modeButtonHome.appendChild(modeBtn)
+      ;(this.#modeButtonHome as HTMLElement).style.removeProperty('display')
+    }
+    this.#modeButtonHome = null
   }
 
   /** Model-name marquee: re-measure on the next frame (mutation streams

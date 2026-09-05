@@ -270,6 +270,29 @@
     padding-bottom: calc(var(--dshm-safe-bottom) + var(--dshm-keyboard-inset));
   }
 
+  /* Header tabs row: when the mode button is relocated here via JS, it
+     pushes right with margin-left:auto (inline style). The row stays a
+     single-height strip. Hide the title-row actions cluster that used to
+     hold the button (display:none is set inline by the controller). */
+  [data-dsh-mobile] [data-phase='active'] header [role='tablist'] {
+    align-items: center;
+  }
+
+  /* Crumbs nav: stretch to fill the titleCluster so the session title
+     gets maximum horizontal room (ellipsis truncation is stock CSS). */
+  [data-dsh-mobile] [data-phase='active'] header nav {
+    flex: 1;
+    min-width: 0;
+  }
+  [data-dsh-mobile] [data-phase='active'] header nav > span {
+    flex: 1;
+    min-width: 0;
+  }
+  [data-dsh-mobile] [data-phase='active'] header nav button {
+    min-width: 0;
+    max-width: none;   /* stock .crumb caps at 220px — override for full width */
+  }
+
   /* Hidden scrollbars are the norm on phones: no reserved gutter, no bars. */
   [data-dsh-mobile] [data-conversation-scroll] {
     scrollbar-gutter: auto;
