@@ -566,10 +566,19 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Touch Enter inserts a newline while preserving the stock modifier and
-   *  slash-menu paths. */
+   *  slash-menu paths. The composer surface differs by dsh generation:
+   *  <= 0.1.1 renders a <textarea>, >= 0.1.2 a Lexical contenteditable
+   *  ([data-composer-input]). On the contenteditable, stopping the keydown
+   *  keeps Lexical's KEY_ENTER_COMMAND (submit) from firing while the OS
+   *  keyboard's own beforeinput insertParagraph still lands the line break
+   *  through Lexical's model — no editor desync. */
   readonly #onComposerKeyDown = (event: KeyboardEvent): void => {
     const target = event.target
-    if (!(target instanceof HTMLTextAreaElement) || event.key !== 'Enter') return
+    if (event.key !== 'Enter') return
+    const isTextarea = target instanceof HTMLTextAreaElement
+    const isComposerEditable = target instanceof Element
+      && target.closest('[data-composer-input]') !== null
+    if (!isTextarea && !isComposerEditable) return
     if (event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.shiftKey) return
     if (!this.#mql?.matches || target.closest('[data-composer-card]') === null) return
     if (document.querySelector('[role="listbox"][aria-activedescendant]') !== null) return

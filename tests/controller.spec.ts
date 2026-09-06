@@ -579,3 +579,61 @@ describe('MobileController model-name marquee', () => {
     expect(label.textContent).toBe('DeepSeek-V4-Flash')
   })
 })
+
+describe('MobileController touch-Enter newline', () => {
+  /** Mount a composer card holding the given editor surface. */
+  function makeComposer(surface: HTMLElement): void {
+    makeFrame()
+    const card = document.createElement('div')
+    card.setAttribute('data-composer-card', '')
+    card.append(surface)
+    document.getElementById('root')!.firstElementChild!.children[1]!.append(card)
+  }
+
+  /** Dispatch a keydown on the surface and report whether it was stopped
+   *  before reaching a stock-world listener (submit). */
+  function fireEnter(surface: HTMLElement, init: Partial<KeyboardEventInit> = {}): boolean {
+    let reachedStock = false
+    surface.addEventListener('keydown', () => { reachedStock = true })
+    surface.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', bubbles: true, cancelable: true,
+      ...init,
+    }))
+    return reachedStock
+  }
+
+  it('stops bare Enter on the dsh <=0.1.1 textarea composer', () => {
+    stubMatchMedia(true)
+    const textarea = document.createElement('textarea')
+    makeComposer(textarea)
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    expect(fireEnter(textarea)).toBe(false)
+    // Modifier/IME paths stay with the stock world (submit / menu pick).
+    expect(fireEnter(textarea, { shiftKey: true })).toBe(true)
+    expect(fireEnter(textarea, { ctrlKey: true })).toBe(true)
+  })
+
+  it('stops bare Enter on the dsh >=0.1.2 Lexical contenteditable composer', () => {
+    stubMatchMedia(true)
+    const editable = document.createElement('div')
+    editable.setAttribute('data-composer-input', '')
+    editable.setAttribute('contenteditable', 'true')
+    makeComposer(editable)
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    expect(fireEnter(editable)).toBe(false)
+    // Modifier/IME paths stay with the stock world.
+    expect(fireEnter(editable, { shiftKey: true })).toBe(true)
+  })
+
+  it('ignores Enter outside the mobile breakpoint and outside the composer', () => {
+    stubMatchMedia(false) // desktop
+    const textarea = document.createElement('textarea')
+    makeComposer(textarea)
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    // Desktop keeps the stock submit.
+    expect(fireEnter(textarea)).toBe(true)
+  })
+})
