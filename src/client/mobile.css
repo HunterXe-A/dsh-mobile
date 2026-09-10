@@ -3,10 +3,7 @@
    leaves the stock GUI byte-identical.
 
    Selectors key off stable, version-independent hooks only: the AppFrame's
-   data-* attributes (data-sidebar-collapsed / data-details-collapsed, which
-   the frame div itself carries in every snapshot and official bundle,
-   wherever it sits in the shell tree — rc.5 wraps the frame in an extra
-   shell div, so no `#root >` child prefix is assumed), the conversation
+   data-dshm-frame attribute (set by the controller on the AppFrame element), the conversation
    skeleton's data seats ([data-phase], [data-conversation-scroll],
    [data-composer-seat], [data-composer-card]), and the drag handles'
    data-side attribute. No hashed class names — the same sheet must work
@@ -34,8 +31,6 @@
   --dshm-safe-right: env(safe-area-inset-right, 0px);
   --dshm-safe-bottom: env(safe-area-inset-bottom, 0px);
   --dshm-safe-left: env(safe-area-inset-left, 0px);
-  /* Virtual-keyboard inset, driven by the controller (visualViewport). */
-  --dshm-keyboard-inset: 0px;
   /* Sidebar page width (phones): at least the sidebar's own 280px content
      width (so it is never clipped), at most 360px, with ~70vw — the chat
      card then shows only a sliver on the right (PiUI's overlayWidth idea,
@@ -108,8 +103,7 @@
      tracks into two snap pages: the sidebar page at the half-open width,
      the chat page full-width (so the chat stays visible beside the
      sidebar), the details track dropped (no phone use). */
-  [data-dsh-mobile] div[data-sidebar-collapsed],
-  [data-dsh-mobile] div[data-details-collapsed] {
+  [data-dsh-mobile] [data-dshm-frame] {
     grid-template-columns: var(--dshm-sidebar-width) 100% 0 !important;
     overflow-x: auto;
     overflow-y: hidden;
@@ -119,8 +113,7 @@
   }
 
   /* Hide the pager's own horizontal scrollbar on every engine. */
-  [data-dsh-mobile] div[data-sidebar-collapsed]::-webkit-scrollbar,
-  [data-dsh-mobile] div[data-details-collapsed]::-webkit-scrollbar {
+  [data-dsh-mobile] [data-dshm-frame]::-webkit-scrollbar {
     width: 0;
     height: 0;
     display: none;
@@ -128,8 +121,7 @@
 
   /* The two live pages snap to the scrollport start (scroll-snap-stop keeps
      a fast swipe from skipping a page). */
-  [data-dsh-mobile] div[data-sidebar-collapsed] > :nth-child(-n+2),
-  [data-dsh-mobile] div[data-details-collapsed] > :nth-child(-n+2) {
+  [data-dsh-mobile] [data-dshm-frame] > :nth-child(-n+2) {
     scroll-snap-align: start;
     scroll-snap-stop: always;
   }
@@ -140,8 +132,7 @@
      what separate the two (PiUI). The sidebar column itself is already
      bg-base; the sidebar shell's own fill is reset to transparent so every
      layer of the sidebar matches the chat. */
-  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child,
-  [data-dsh-mobile] div[data-details-collapsed] > :first-child {
+  [data-dsh-mobile] [data-dshm-frame] > :first-child {
     background: var(--dsw-alias-bg-base);
     border-right: none;
     padding-top: var(--dshm-safe-top);
@@ -153,10 +144,8 @@
      sidebar in an extra div) — so every layer of the sidebar page matches
      the chat background. Deeper elements keep their own states (hover,
      active) untouched. */
-  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child > :first-child,
-  [data-dsh-mobile] div[data-details-collapsed] > :first-child > :first-child,
-  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child > :first-child > :first-child,
-  [data-dsh-mobile] div[data-details-collapsed] > :first-child > :first-child > :first-child {
+  [data-dsh-mobile] [data-dshm-frame] > :first-child > :first-child,
+  [data-dsh-mobile] [data-dshm-frame] > :first-child > :first-child > :first-child {
     background: transparent;
   }
 
@@ -172,8 +161,7 @@
      inline styles; the primitives Modal portals out of the tree), and
      scoping under the frame's first child keeps the frame's own inline
      grid-template-columns out of reach. */
-  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child div[style*='width'],
-  [data-dsh-mobile] div[data-details-collapsed] > :first-child div[style*='width'] {
+  [data-dsh-mobile] [data-dshm-frame] > :first-child div[style*='width'] {
     min-width: 100%;
   }
 
@@ -196,8 +184,7 @@
      and went invisible on phones), and a pinned 3D layer janks the
      conversation column's scroll. During a flip the 3D layer is required
      for the rotateY/scale to render properly. */
-  [data-dsh-mobile] div[data-sidebar-collapsed] > :nth-child(2),
-  [data-dsh-mobile] div[data-details-collapsed] > :nth-child(2) {
+  [data-dsh-mobile] [data-dshm-frame] > :nth-child(2) {
     border: none;
     border-radius: 16px;
     overflow: hidden;
@@ -213,8 +200,7 @@
      releasing the conversation column's 3D layer — at rest it is plain 2D
      content again (scrolls composite on the cheap) and panels mounting in
      the composer seat are never trapped in a preserve-3d context. */
-  [data-dsh-mobile]:not([data-dshm-flipping]) div[data-sidebar-collapsed] > :nth-child(2),
-  [data-dsh-mobile]:not([data-dshm-flipping]) div[data-details-collapsed] > :nth-child(2) {
+  [data-dsh-mobile]:not([data-dshm-flipping]) [data-dshm-frame] > :nth-child(2) {
     transform: none;
     transform-style: flat;
     backface-visibility: visible;
@@ -223,8 +209,7 @@
   /* The 3D layer (preserve-3d + hidden backface + will-change) is granted
      only while a flip is actually live — the controller sets
      [data-dshm-flipping] on <html> while |flip progress| > 0. */
-  [data-dsh-mobile][data-dshm-flipping] div[data-sidebar-collapsed] > :nth-child(2),
-  [data-dsh-mobile][data-dshm-flipping] div[data-details-collapsed] > :nth-child(2) {
+  [data-dsh-mobile][data-dshm-flipping] [data-dshm-frame] > :nth-child(2) {
     transform-style: preserve-3d;
     backface-visibility: hidden;
     will-change: transform;
@@ -233,8 +218,7 @@
   /* Chat page (resting on the conversation): full-bleed, no card chrome —
      square corners and no shadow so nothing inside the screen suggests a
      card. Only the exposed sliver state (sidebar page) keeps the radius. */
-  [data-dsh-mobile][data-dshm-page='chat'] div[data-sidebar-collapsed] > :nth-child(2),
-  [data-dsh-mobile][data-dshm-page='chat'] div[data-details-collapsed] > :nth-child(2) {
+  [data-dsh-mobile][data-dshm-page='chat'] [data-dshm-frame] > :nth-child(2) {
     border-radius: 0;
     box-shadow: none;
   }
@@ -244,8 +228,7 @@
      affordance; on the always-open phone sidebar it just dims the tail of
      the list. Selected structurally (the tree body's span child, next to
      the role=tree list), never by hashed class name. */
-  [data-dsh-mobile] div[data-sidebar-collapsed] > :first-child div:has(> [role='tree']) > span,
-  [data-dsh-mobile] div[data-details-collapsed] > :first-child div:has(> [role='tree']) > span {
+  [data-dsh-mobile] [data-dshm-frame] > :first-child div:has(> [role='tree']) > span {
     display: none;
   }
 
@@ -264,10 +247,11 @@
     --dsh-composer-side-clearance: 12px;
   }
 
-  /* Sticky composer seat: lift the input card above the home indicator and
-     the virtual keyboard (both insets are 0 outside mobile contexts). */
+  /* Sticky composer seat: lift the input card above the home indicator.
+     The body's 100dvh already shrinks when the virtual keyboard opens, so
+     the seat sits naturally above it — no keyboard inset padding needed. */
   [data-dsh-mobile] [data-composer-seat] {
-    padding-bottom: calc(var(--dshm-safe-bottom) + var(--dshm-keyboard-inset));
+    padding-bottom: var(--dshm-safe-bottom);
   }
 
   /* Hidden scrollbars are the norm on phones: no reserved gutter, no bars. */

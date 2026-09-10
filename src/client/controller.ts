@@ -1,7 +1,7 @@
 /**
  * DOM-side mobile controller: the non-React half of the plugin. Owns the
  * pieces the frame itself cannot express — the viewport meta upgrade, the
- * safe-area/keyboard CSS variables, and the pager's live state (page mirror,
+ * safe-area CSS variables, and the pager's live state (page mirror,
  * 3D flip vars, click-to-return). Everything it installs is removed by
  * dispose(), and every rule it depends on is scoped under the
  * [data-dsh-mobile] attribute it sets on <html>.
@@ -64,17 +64,18 @@ const VIEWPORT_CONTENT =
   'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
 
 /**
- * The AppFrame keeps at least one of its two data attributes in every state
- * (a closed sidebar renders the rail, a closed details column renders zero
- * width), so the union always selects the frame and never a descendant. The
- * attributes identify the frame wherever it sits in the tree — rc.5 wraps
- * the frame in an extra shell div, so no `#root >` child prefix is assumed.
+ * 识别 AppFrame 元素的属性名（控制器会在首次发现时打上 dshm-frame 标记）。
+ * 新版 DSH (rc.1) 移除了 data-details-collapsed，且 data-sidebar-collapsed
+ * 仅在侧边栏收起时存在；手机端侧边栏展开后两个属性都不在。改用
+ * data-rightbar-collapsed（手机端 rightbar 始终为 0，该属性始终存在）+ 已打
+ * 标记的 data-dshm-frame 来定位。
  */
-const FRAME_SELECTOR = 'div[data-sidebar-collapsed], div[data-details-collapsed]'
+const FRAME_MARKER = 'data-dshm-frame'
+const FIND_FRAME_SELECTOR = `[${FRAME_MARKER}], [data-rightbar-collapsed], [data-sidebar-collapsed]`
 
 /** The AppFrame element, or null before the layout entry mounts it. */
 function findFrame(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(FRAME_SELECTOR)
+  return document.querySelector<HTMLElement>(FIND_FRAME_SELECTOR)
 }
 
 /**
@@ -215,7 +216,6 @@ export class MobileController implements MobileControllerHandle {
   #compactingIndicator: HTMLDivElement | null = null
   #viewportMeta: HTMLMetaElement | null = null
   #viewportOriginal: string | null = null
-  #keyboardFrame: number | null = null
   #mountFrame: number | null = null
   #resizeTimer: number | null = null
   #settleTimer: number | null = null
@@ -239,6 +239,10 @@ export class MobileController implements MobileControllerHandle {
   #conversationObserver: MutationObserver | null = null
   #conversationTarget: Element | null = null
   #lastActivityAt = 0
+  /** Original parent of the mode button before relocation, used to restore
+   *  on dispose. When null the button has not been relocated. */
+  #modeButtonHome: Element | null = null
+  #modeRelocateFrame: number | null = null
 
   /** @param options - apply-world callbacks. */
   constructor(options: MobileControllerOptions) {
@@ -326,13 +330,6 @@ export class MobileController implements MobileControllerHandle {
     this.#mql = window.matchMedia(MOBILE_BREAKPOINT)
     this.#mql.addEventListener('change', this.#onBreakpointChange)
 
-    // Keyboard inset: the visual viewport shrinks when the OS keyboard
-    // opens; the composer seat pads itself by the difference (rAF-throttled
-    // — the resize fires every frame of the keyboard animation).
-    const vv = window.visualViewport
-    vv?.addEventListener('resize', this.#requestKeyboard)
-    vv?.addEventListener('scroll', this.#requestKeyboard)
-
     // Keep the active page in place when the viewport width changes within
     // a breakpoint side (rotation / split-screen reflows the page tracks).
     this.#lastInnerWidth = window.innerWidth
@@ -350,6 +347,7 @@ export class MobileController implements MobileControllerHandle {
     // automatic focus is bounced.
     document.addEventListener('pointerdown', this.#onPointerDownCapture, true)
     document.addEventListener('focusin', this.#onFocusInCapture, true)
+    document.addEventListener('keydown', this.#onComposerKeyDown, true)
 
     // Toggle data-dshm-hidden so CSS can pause animations when tab is backgrounded.
     document.addEventListener('visibilitychange', this.#onVisibilityChange)
@@ -367,7 +365,7 @@ export class MobileController implements MobileControllerHandle {
       // overflow state, so re-measure on every mutation (rAF-throttled —
       // the check is one querySelector + two reads, cheap even while
       // streaming tokens mutate the tree every frame).
-      this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync() })
+      this.#composerObserver = new MutationObserver(() => { this.#requestMarqueeSync(); this.#requestModeRelocate() })
       this.#composerObserver.observe(root, {
         childList: true,
         subtree: true,
@@ -447,24 +445,26 @@ export class MobileController implements MobileControllerHandle {
     this.#mql?.removeEventListener('change', this.#onBreakpointChange)
     this.#mql = null
     window.removeEventListener('resize', this.#onWindowResize)
-    window.visualViewport?.removeEventListener('resize', this.#requestKeyboard)
-    window.visualViewport?.removeEventListener('scroll', this.#requestKeyboard)
     document.removeEventListener('click', this.#onDocClickCapture, true)
     document.removeEventListener('pointerdown', this.#onPointerDownCapture, true)
     document.removeEventListener('focusin', this.#onFocusInCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
-    for (const timer of [this.#keyboardFrame, this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer, this.#taskStatusFrame]) {
-      if (timer !== null) (timer === this.#keyboardFrame || timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
+    document.removeEventListener('keydown', this.#onComposerKeyDown, true)
+    for (const timer of [this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer, this.#taskStatusFrame, this.#modeRelocateFrame]) {
+      if (timer !== null) (timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame || timer === this.#modeRelocateFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
-    this.#keyboardFrame = null
     this.#mountFrame = null
     this.#resizeTimer = null
     this.#settleTimer = null
     this.#marqueeFrame = null
     this.#returnTimer = null
     this.#taskStatusFrame = null
+    this.#modeRelocateFrame = null
     const frame = findFrame()
-    if (frame !== null) frame.removeEventListener('scroll', this.#onPagerScroll)
+    if (frame !== null) {
+      frame.removeEventListener('scroll', this.#onPagerScroll)
+      frame.removeAttribute(FRAME_MARKER)
+    }
     if (this.#viewportMeta !== null) {
       if (this.#viewportOriginal !== null) this.#viewportMeta.content = this.#viewportOriginal
       else this.#viewportMeta.remove()
@@ -475,8 +475,8 @@ export class MobileController implements MobileControllerHandle {
     if (html !== null) {
       html.removeAttribute('data-dsh-mobile')
       html.removeAttribute(PAGE_ATTR)
-      html.style.removeProperty('--dshm-keyboard-inset')
     }
+    this.#restoreModeButton()
     this.#html = null
   }
 
@@ -539,16 +539,24 @@ export class MobileController implements MobileControllerHandle {
     html.setAttribute(PAGE_ATTR, page)
   }
 
-  /** State flips no longer drive the pager (the page is user-driven); an
-   *  expand that landed just clears the pending always-open request. */
+  /** State flips no longer drive the pager (the page is user-driven):
+   *  - expand landed → clear the pending always-open request
+   *  - re-collapse (e.g. right sidebar open resets narrowExpanded) →
+   *    re-expand to maintain the always-open phone layout */
   readonly #onFrameCollapseChange = (): void => {
-    if (!findFrame()?.hasAttribute('data-sidebar-collapsed')) this.#expandPending = false
+    if (!findFrame()?.hasAttribute('data-sidebar-collapsed')) {
+      this.#expandPending = false
+    } else {
+      this.#ensureSidebarOpen()
+    }
   }
 
   readonly #ensureFrameObserver = (): void => {
     if (this.#frameObserver !== null) return
     const frame = findFrame()
     if (frame === null) return
+    // 给 frame 打标记，供 CSS 和后续查询使用。
+    frame.setAttribute(FRAME_MARKER, '')
     this.#frameObserver = new MutationObserver(this.#onFrameCollapseChange)
     this.#frameObserver.observe(frame, {
       attributes: true,
@@ -681,6 +689,26 @@ export class MobileController implements MobileControllerHandle {
     target.blur()
   }
 
+  /** Touch Enter inserts a newline while preserving the stock modifier and
+   *  slash-menu paths. The composer surface differs by dsh generation:
+   *  <= 0.1.1 renders a <textarea>, >= 0.1.2 a Lexical contenteditable
+   *  ([data-composer-input]). On the contenteditable, stopping the keydown
+   *  keeps Lexical's KEY_ENTER_COMMAND (submit) from firing while the OS
+   *  keyboard's own beforeinput insertParagraph still lands the line break
+   *  through Lexical's model — no editor desync. */
+  readonly #onComposerKeyDown = (event: KeyboardEvent): void => {
+    const target = event.target
+    if (event.key !== 'Enter') return
+    const isTextarea = target instanceof HTMLTextAreaElement
+    const isComposerEditable = target instanceof Element
+      && target.closest('[data-composer-input]') !== null
+    if (!isTextarea && !isComposerEditable) return
+    if (event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.shiftKey) return
+    if (!this.#mql?.matches || target.closest('[data-composer-card]') === null) return
+    if (document.querySelector('[role="listbox"][aria-activedescendant]') !== null) return
+    event.stopImmediatePropagation()
+  }
+
   /** A tap on the exposed chat card returns to the chat page (PiUI's
    *  overlay behavior: the exposed chat is not interactive while the
    *  sidebar page is showing). The sidebar's own collapse toggle is
@@ -714,22 +742,70 @@ export class MobileController implements MobileControllerHandle {
     }
   }
 
-  readonly #requestKeyboard = (): void => {
-    if (this.#keyboardFrame !== null) return
-    this.#keyboardFrame = requestAnimationFrame(() => {
-      this.#keyboardFrame = null
-      this.#updateKeyboardInset()
+  /** Relocate the mode-button (agent preset / "Standard mode") from the
+   *  header title-row into the tabs row, right-aligned. This saves one
+   *  row of vertical header space on mobile. Called rAF-throttled from
+   *  the composer observer. */
+  readonly #requestModeRelocate = (): void => {
+    if (this.#modeRelocateFrame !== null) return
+    this.#modeRelocateFrame = requestAnimationFrame(() => {
+      this.#modeRelocateFrame = null
+      this.#syncModeRelocate()
     })
   }
 
-  readonly #updateKeyboardInset = (): void => {
-    const html = this.#html
-    if (html === null) return
-    const vv = window.visualViewport
-    const inset = vv !== null && vv.height < window.innerHeight
-      ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-      : 0
-    html.style.setProperty('--dshm-keyboard-inset', `${inset}px`)
+  #syncModeRelocate(): void {
+    if (this.#disposed) return
+    const header = document.querySelector('header[aria-hidden]') ? null
+      : document.querySelector('header')
+    if (header === null) return
+
+    const tablist = header.querySelector<HTMLElement>('[role="tablist"]')
+    const actionsSlot = header.querySelector(
+      '[data-slot="conversation.session.header.actions"]',
+    )
+    if (tablist === null || actionsSlot === null) {
+      // Header has no tabs (hero phase) — restore button if relocated
+      this.#restoreModeButton()
+      return
+    }
+
+    // The mode button is a <span class="…_label"> inside the actions slot.
+    const modeBtn = actionsSlot.querySelector<HTMLElement>(
+      'span[title], button[title]',
+    )
+    if (modeBtn === null || tablist.contains(modeBtn)) return
+
+    // Save original parent for restore on dispose / phase switch.
+    this.#modeButtonHome = modeBtn.parentElement
+
+    // Move to tablist, right-aligned.
+    modeBtn.style.marginLeft = 'auto'
+    modeBtn.style.flexShrink = '0'
+    modeBtn.style.alignSelf = 'center'
+    tablist.appendChild(modeBtn)
+
+    // Hide the now-empty title-row actions cluster.
+    if (this.#modeButtonHome !== null) {
+      ;(this.#modeButtonHome as HTMLElement).style.display = 'none'
+    }
+  }
+
+  #restoreModeButton(): void {
+    if (this.#modeButtonHome === null) return
+    const header = document.querySelector('header')
+    const tablist = header?.querySelector('[role="tablist"]')
+    const modeBtn = tablist?.querySelector<HTMLElement>(
+      'span[title], button[title]',
+    )
+    if (modeBtn !== null && this.#modeButtonHome !== null) {
+      modeBtn.style.removeProperty('margin-left')
+      modeBtn.style.removeProperty('flex-shrink')
+      modeBtn.style.removeProperty('align-self')
+      this.#modeButtonHome.appendChild(modeBtn)
+      ;(this.#modeButtonHome as HTMLElement).style.removeProperty('display')
+    }
+    this.#modeButtonHome = null
   }
 
   /** Model-name marquee: re-measure on the next frame (mutation streams

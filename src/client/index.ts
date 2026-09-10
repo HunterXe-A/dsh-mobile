@@ -1,6 +1,6 @@
 /**
  * Browser half of the dsh-mobile plugin: mounts the DOM-side mobile
- * controller (viewport meta, safe-area/keyboard insets, pager page mirror)
+ * controller (viewport meta, safe-area insets, pager page mirror)
  * and returns to the chat page when the current session changes (a session
  * picked in the sidebar). The global mobile sheet (mobile.css) is injected
  * with this bundle as a <style data-plugin> tag and removed on unload — the
@@ -11,12 +11,19 @@
  * renders completely untouched, and the pager starts on the chat page —
  * swiping reveals the always-open sidebar.
  */
-import type { Context } from '@deepseek-ai/cordis'
+// The client context type: cordis' Context merged with the plugin surfaces
+// referenced below (ui-layout's ctx.layout via the type-only import; the
+// sessions service merge comes from the session-controller contract).
+import type { Context as ClientContext } from 'cordis'
 import type { ConversationMatch, ConversationNodeContext, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
-// Type-only: pulls the layout plugin's Context merge (ctx.layout), the
-// sessions service, and the conversation event registry into this compilation unit.
+// Type-only: pulls the layout plugin's Context merge (ctx.layout) into this
+// compilation unit.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+// Type-only: pulls the ISessions Context merge (ctx.sessions) — the sessions
+// service now lives in the session-controller package (moved out of the
+// removed client-runtime).
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import { MobileController } from './controller.ts'
 // Plugin-owned global mobile sheet (injected as a <style data-plugin> tag).
 import './mobile.css'
@@ -31,12 +38,12 @@ export const inject = ['layout', 'sessions', 'uiConversation']
  * probe the turn-status label would sit stale or vanish for the whole
  * automatic-compaction window. State-only Definition: no view target, no
  * location data, nothing rendered; it just flips the controller's
- * compaction flag (compaction/start → true, compaction/end → false).
+ * compaction flag (compaction/start → true; compaction/end → false).
  * `compaction/summary` keeps the flag up (it precedes the end event).
  * @param controller - DOM controller driving the status label.
  * @returns the registration disposer for the effect teardown.
  */
-function registerCompactionProbe(ctx: Context, controller: MobileController): () => void {
+function registerCompactionProbe(ctx: ClientContext, controller: MobileController): () => void {
   return ctx.uiConversation.events.register({
     kind: 'dshm-task-compaction',
     match: (event: SessionEventLike): { id: string, role: 'start' | 'update' } | null => {
@@ -65,7 +72,7 @@ function registerCompactionProbe(ctx: Context, controller: MobileController): ()
  * do not move `current` (running flags, titles) leave it alone.
  * @param ctx - Client root context.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     const controller = new MobileController({
       toggleSidebar: () => ctx.layout.toggleSidebar(),
