@@ -61,7 +61,7 @@ const SIDEBAR_COLLAPSE_LABELS = new Set(['收起侧边栏', 'Collapse sidebar'])
  * the safe-area insets to env().
  */
 const VIEWPORT_CONTENT =
-  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
+  'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content'
 
 /**
  * 识别 AppFrame 元素的属性名（控制器会在首次发现时打上 dshm-frame 标记）。
