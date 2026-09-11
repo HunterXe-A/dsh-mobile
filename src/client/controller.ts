@@ -475,6 +475,7 @@ export class MobileController implements MobileControllerHandle {
     if (html !== null) {
       html.removeAttribute('data-dsh-mobile')
       html.removeAttribute(PAGE_ATTR)
+      html.removeAttribute('data-dshm-flipping')
     }
     this.#restoreModeButton()
     this.#html = null
@@ -646,6 +647,16 @@ export class MobileController implements MobileControllerHandle {
     frame.style.setProperty('--dshm-scale', `${1 - abs * 0.06}`)
     frame.style.setProperty('--dshm-offset-x', `${right * right * -48}px`)
     frame.style.setProperty('--dshm-origin-x', `${50 - progress * 50}%`)
+
+    // Toggle the 3D layer: mobile.css grants preserve-3d ONLY while a flip is
+    // live ([data-dshm-flipping] on <html>), so at rest the card is plain 2D
+    // (no pinned compositing layer that would clip sticky composer-seat
+    // panels or jank the conversation scroll).
+    const html = this.#html
+    if (html !== null) {
+      if (abs > 0) html.setAttribute('data-dshm-flipping', '')
+      else html.removeAttribute('data-dshm-flipping')
+    }
   }
 
   readonly #settlePager = (): void => {
