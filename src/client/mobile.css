@@ -273,11 +273,6 @@
     padding-bottom: 11px;
     box-sizing: border-box;
   }
-  /* Hide the headerUtilities (session-log button) on mobile: it eats
-     title-row space and is a secondary action. */
-  [data-dsh-mobile] [data-phase='active'] header > div:first-child > div:last-child {
-    display: none;
-  }
 
   /* Crumbs nav: stretch to fill the titleCluster so the session title
      gets maximum horizontal room (ellipsis truncation is stock CSS). */
@@ -855,19 +850,6 @@
     min-width: 0;
     padding-left: 24px;
     padding-right: 24px;
-  }
-
-  /* Session log download button: hide text, keep icon only on narrow screens.
-     The button sits inside headerUtilities > div[data-slot] and contains a
-     <span> text + <svg> icon; hiding the span keeps only the download icon,
-     reclaiming ~80px of header space. */
-  [data-dsh-mobile] [data-slot='conversation.session.header.utilities'] button {
-    min-width: 0 !important;
-    padding: 6px !important;
-  }
-
-  [data-dsh-mobile] [data-slot='conversation.session.header.utilities'] button > span {
-    display: none !important;
   }
 
 }
