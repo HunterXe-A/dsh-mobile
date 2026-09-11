@@ -164,7 +164,28 @@ describe('MobileController always-open sidebar + pager', () => {
 
     // A stale 72px cache would clamp progress to 1 and leave the chat card at
     // translateX(-48px). The expanded edge must produce the resting transform.
-    expect(frame.style.getPropertyValue('--dshm-offset-x')).not.toBe('-48px')
+    expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
+    expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
+    expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
+  })
+
+  it('applies one complete flip transform mid-swipe and clears it at rest', () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+
+    frame.scrollLeft = 150 // chatLeft 300, progress -0.5
+    frame.dispatchEvent(new Event('scroll'))
+    expect(frame.style.getPropertyValue('--dshm-flip-transform'))
+      .toBe('translate3d(0px, 0, 0) rotateY(-5deg) scale(0.97)')
+    expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('75% 50%')
+    expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(true)
+
+    frame.scrollLeft = 300
+    frame.dispatchEvent(new Event('scroll'))
+    expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
+    expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
     expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 

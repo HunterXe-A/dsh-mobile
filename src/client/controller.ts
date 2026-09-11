@@ -2,7 +2,7 @@
  * DOM-side mobile controller: the non-React half of the plugin. Owns the
  * pieces the frame itself cannot express — the viewport meta upgrade, the
  * safe-area CSS variables, and the pager's live state (page mirror,
- * 3D flip vars, click-to-return). Everything it installs is removed by
+ * 3D pager state, click-to-return). Everything it installs is removed by
  * dispose(), and every rule it depends on is scoped under the
  * [data-dsh-mobile] attribute it sets on <html>.
  *
@@ -17,6 +17,8 @@
  * rendered at all times (a swipe is never state-synced, so it never
  * re-renders).
  */
+
+import { calculatePagerFlip, samePagerFlip, type PagerFlipState } from './pager-flip.ts'
 
 /** The narrow breakpoint the pager keys off (PiUI's 768px). */
 export const MOBILE_BREAKPOINT = '(max-width: 768px)'
@@ -172,6 +174,14 @@ function chatPageLeft(frame: HTMLElement): number {
   return frame.clientWidth
 }
 
+/** Legacy custom properties left by pre-refactor package versions. */
+const LEGACY_FLIP_PROPERTIES = [
+  '--dshm-rotate',
+  '--dshm-scale',
+  '--dshm-offset-x',
+  '--dshm-origin-x',
+] as const
+
 /** Callbacks the controller needs from the apply world. */
 export interface MobileControllerOptions {
   /** Toggle the sidebar panel (frame-owned layout action). */
@@ -243,19 +253,9 @@ export class MobileController implements MobileControllerHandle {
    *  on dispose. When null the button has not been relocated. */
   #modeButtonHome: Element | null = null
   #modeRelocateFrame: number | null = null
-  /** Cached last-written flip state, so the per-scroll driver only touches the
-   *  DOM when a value actually changed (style recalc is the jank cost). */
-  #flipRotate = 0
-  #flipScale = 1
-  #flipOffsetX = 0
-  #flipOriginX = 50
-  #flipActive = false
-  #mirroredPage: string | null = null
-  /** Cached chat-page left edge. chatPageLeft() reads sidebar.offsetWidth,
-   *  a forced synchronous layout (reflow) — the top jank cost per scroll
-   *  frame. The sidebar width only changes with the viewport width (the
-   *  mobile clamp has a 70vw term), so it is cached during a swipe and
-   *  invalidated on width change / breakpoint flip. -1 = needs measure. */
+  /** Last applied visual state of the chat-page flip. */
+  #flipState: PagerFlipState | null = null
+  /** Cached chat-page left edge. Invalidated on width and collapse changes. */
   #cachedChatLeft = -1
 
   /** @param options - apply-world callbacks. */
@@ -486,10 +486,10 @@ export class MobileController implements MobileControllerHandle {
       this.#viewportOriginal = null
     }
     const html = this.#html
+    this.#clearFlipStyles(frame)
     if (html !== null) {
       html.removeAttribute('data-dsh-mobile')
       html.removeAttribute(PAGE_ATTR)
-      html.removeAttribute('data-dshm-flipping')
     }
     this.#restoreModeButton()
     this.#html = null
@@ -529,6 +529,56 @@ export class MobileController implements MobileControllerHandle {
     this.#options.toggleSidebar()
   }
 
+  /** Read the cached chat-page edge, refreshing when the scroll position proves
+   *  the cache is stale (for example while the sidebar expands from its rail). */
+  readonly #getChatLeft = (frame: HTMLElement): number => {
+    let chatLeft = this.#cachedChatLeft
+    if (chatLeft <= 0 || frame.scrollLeft > chatLeft) {
+      chatLeft = chatPageLeft(frame)
+      this.#cachedChatLeft = chatLeft > 0 ? chatLeft : -1
+    }
+    return chatLeft
+  }
+
+  /** Remove all flip styles, including values from older plugin versions. */
+  readonly #clearFlipStyles = (frame: HTMLElement | null): void => {
+    for (const property of ['--dshm-flip-transform', '--dshm-flip-origin', ...LEGACY_FLIP_PROPERTIES]) {
+      frame?.style.removeProperty(property)
+    }
+    this.#html?.removeAttribute('data-dshm-flipping')
+    this.#flipState = null
+  }
+
+  /** Apply a flip state only when its visual output changed. */
+  readonly #syncFlip = (frame: HTMLElement, chatLeft: number): void => {
+    const next = calculatePagerFlip(frame.scrollLeft, chatLeft)
+    if (samePagerFlip(this.#flipState, next)) return
+
+    const active = next.active
+    if (active) {
+      frame.style.setProperty('--dshm-flip-transform', next.transform)
+      frame.style.setProperty('--dshm-flip-origin', next.origin)
+      this.#html?.setAttribute('data-dshm-flipping', '')
+      this.#flipState = next
+      return
+    }
+    this.#clearFlipStyles(frame)
+    this.#flipState = next
+  }
+
+  /** Mirror the resting page and update its live visual flip from one measure. */
+  readonly #syncPager = (frame: HTMLElement, hint?: MobilePage): void => {
+    const chatLeft = this.#getChatLeft(frame)
+    const page: MobilePage = chatLeft <= 0
+      ? (hint ?? 'chat')
+      : frame.scrollLeft < chatLeft / 2 ? 'sidebar' : 'chat'
+    const html = this.#html
+    if (html !== null && html.getAttribute(PAGE_ATTR) !== page) {
+      html.setAttribute(PAGE_ATTR, page)
+    }
+    this.#syncFlip(frame, chatLeft)
+  }
+
   /** Scroll the pager to the chat page and mirror the resting page. */
   readonly #placeOnChat = (behavior: ScrollBehavior): void => {
     const frame = findFrame()
@@ -539,28 +589,8 @@ export class MobileController implements MobileControllerHandle {
     if (Math.abs(frame.scrollLeft - chatLeft) > 2) {
       frame.scrollTo({ left: chatLeft, behavior })
     }
-    this.#mirrorPage(frame, 'chat')
-    this.#updateFlipVars(frame)
-  }
-
-  /** Mirror the page the pager is resting on (scroll position decides). */
-  readonly #mirrorPage = (frame: HTMLElement, hint?: MobilePage): void => {
-    const html = this.#html
-    if (html === null) return
-    let chatLeft = this.#cachedChatLeft
-    if (chatLeft < 0) {
-      chatLeft = chatPageLeft(frame)
-      this.#cachedChatLeft = chatLeft
-    }
-    const page: MobilePage = chatLeft <= 0
-      ? (hint ?? 'chat')
-      : frame.scrollLeft < chatLeft / 2 ? 'sidebar' : 'chat'
-    // Only write when the mirrored page changed — this runs on every scroll
-    // frame, and setAttribute on <html> forces an attribute/style recalc.
-    if (page !== this.#mirroredPage) {
-      this.#mirroredPage = page
-      html.setAttribute(PAGE_ATTR, page)
-    }
+    this.#cachedChatLeft = chatLeft
+    this.#syncPager(frame, 'chat')
   }
 
   /** State flips no longer drive the pager (the page is user-driven):
@@ -570,8 +600,6 @@ export class MobileController implements MobileControllerHandle {
   readonly #onFrameCollapseChange = (): void => {
     // The rail/expanded transition changes the rendered sidebar width, so the
     // cached chat-page edge must be measured again before the next scroll.
-    // Otherwise progress is computed from the old rail width and the chat card
-    // can retain the -48px overscroll offset on the full-width chat page.
     this.#cachedChatLeft = -1
     if (!findFrame()?.hasAttribute('data-sidebar-collapsed')) {
       this.#expandPending = false
@@ -608,9 +636,7 @@ export class MobileController implements MobileControllerHandle {
     const mobile = this.#mql?.matches ?? false
     const frame = findFrame()
     if (!mobile) {
-      for (const prop of ['--dshm-rotate', '--dshm-scale', '--dshm-offset-x', '--dshm-origin-x']) {
-        frame?.style.removeProperty(prop)
-      }
+      this.#clearFlipStyles(frame)
       this.#html?.removeAttribute(PAGE_ATTR)
       return
     }
@@ -647,8 +673,7 @@ export class MobileController implements MobileControllerHandle {
       if (chatLeft <= 0) return
       const onChat = frame.scrollLeft >= chatLeft / 2
       frame.scrollTo({ left: onChat ? chatLeft : 0, behavior: 'auto' })
-      this.#mirrorPage(frame)
-      this.#updateFlipVars(frame)
+      this.#syncPager(frame)
     }, 120)
   }
 
@@ -661,54 +686,12 @@ export class MobileController implements MobileControllerHandle {
     const frame = findFrame()
     const mobile = this.#mql?.matches ?? false
     if (frame === null || !mobile) return
-    this.#updateFlipVars(frame)
-    this.#mirrorPage(frame)
+    this.#syncPager(frame)
     if (this.#settleTimer !== null) window.clearTimeout(this.#settleTimer)
     this.#settleTimer = window.setTimeout(() => {
       this.#settleTimer = null
       this.#settlePager()
     }, SCROLL_SETTLE_MS)
-  }
-
-  /** PiUI's flip: progress -1 (sidebar page) … 0 (chat page); the chat card
-   *  rotates about the edge toward the swipe side and shrinks, so on the
-   *  sidebar page it sinks away leaving only a sliver visible. Runs on every
-   *  scroll frame, so each write is guarded by a cached value — the DOM is
-   *  touched only when the number actually changed (style recalc is the jank
-   *  cost on a swipe). */
-  readonly #updateFlipVars = (frame: HTMLElement): void => {
-    let chatLeft = this.#cachedChatLeft
-    if (chatLeft < 0) {
-      chatLeft = chatPageLeft(frame)
-      this.#cachedChatLeft = chatLeft
-    }
-    if (chatLeft <= 0) return
-    const progress = Math.max(-1, Math.min(1, (frame.scrollLeft - chatLeft) / chatLeft))
-    const abs = Math.abs(progress)
-    const right = Math.max(0, progress)
-    const rotate = progress * 10
-    const scale = 1 - abs * 0.06
-    const offsetX = right * right * -48
-    const originX = 50 - progress * 50
-    if (rotate !== this.#flipRotate) { this.#flipRotate = rotate; frame.style.setProperty('--dshm-rotate', `${rotate}deg`) }
-    if (scale !== this.#flipScale) { this.#flipScale = scale; frame.style.setProperty('--dshm-scale', `${scale}`) }
-    if (offsetX !== this.#flipOffsetX) { this.#flipOffsetX = offsetX; frame.style.setProperty('--dshm-offset-x', `${offsetX}px`) }
-    if (originX !== this.#flipOriginX) { this.#flipOriginX = originX; frame.style.setProperty('--dshm-origin-x', `${originX}%`) }
-
-    // Toggle the 3D layer only when the active/inactive state flips: mobile.css
-    // grants preserve-3d ONLY while a flip is live ([data-dshm-flipping] on
-    // <html>), so at rest the card is plain 2D (no pinned compositing layer
-    // that would clip sticky composer-seat panels or jank the conversation
-    // scroll).
-    const active = abs > 0
-    if (active !== this.#flipActive) {
-      this.#flipActive = active
-      const html = this.#html
-      if (html !== null) {
-        if (active) html.setAttribute('data-dshm-flipping', '')
-        else html.removeAttribute('data-dshm-flipping')
-      }
-    }
   }
 
   readonly #settlePager = (): void => {
@@ -723,7 +706,8 @@ export class MobileController implements MobileControllerHandle {
     if (Math.abs(left - target) > 4) {
       frame.scrollTo({ left: target, behavior: 'smooth' })
     }
-    this.#mirrorPage(frame)
+    this.#cachedChatLeft = chatLeft
+    this.#syncPager(frame)
   }
 
   /** Record every pointerdown (capture, passive) so the focus-in suppressor

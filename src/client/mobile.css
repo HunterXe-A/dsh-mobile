@@ -39,10 +39,8 @@
      the viewport. */
   --dshm-sidebar-width: clamp(280px, 70vw, 360px);
   /* PiUI-style 3D flip of the chat card, driven by the controller on scroll. */
-  --dshm-rotate: 0deg;
-  --dshm-scale: 1;
-  --dshm-offset-x: 0px;
-  --dshm-origin-x: 50% 50%;
+  --dshm-flip-transform: none;
+  --dshm-flip-origin: 50% 50%;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -190,10 +188,8 @@
     overflow: hidden;
     background: var(--dsw-alias-bg-base);
     box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
-    transform: translate3d(var(--dshm-offset-x, 0px), 0, 0)
-      rotateY(var(--dshm-rotate, 0deg))
-      scale(var(--dshm-scale, 1));
-    transform-origin: var(--dshm-origin-x, 50% 50%);
+    transform: var(--dshm-flip-transform, none);
+    transform-origin: var(--dshm-flip-origin, 50% 50%);
   }
 
   /* Pager at rest (no flip live): the identity transform becomes `none`,
@@ -587,105 +583,42 @@
 
   /* ---------- composer dock stats bar (mobile fit) ----------
 
-     The composer dock above the input card hosts the conversation's
-     aggregate stats line — "8 轮 · 135 步 | LLM 45m25s · 工具调用
-     71m48s | 首 token 平均 5.6s · 73 tok/s | 缓存命中 91% | 输入
-     13.1M tok · 输出 135K tok" (dsh-client-ui-conversation's StatsLine).
-     Stock it is nowrap + ellipsis + overflow:hidden: on a phone there is
-     no hover tooltip, so everything past the ellipsis is unreachable.
-     Keyed off the stable slot hook (the plugin registers INTO this slot;
-     the slot div is display:contents, so its direct child IS the stats
-     bar). text-overflow:clip is REQUIRED, not cosmetic: with ellipsis
-     some engines truncate inline content AT the ellipsis point during
-     layout, so the overflow is not part of the layout and scrolling can
-     only move the already-visible part — the tail never appears. clip
-     keeps the whole line in layout, so horizontal scroll reaches it. */
-
-  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div {
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
-    text-overflow: clip;
-  }
-
-  /* ---------- session stats line (mobile fit) ----------
-
-     The composer-dock readout — "10 轮 · 176 步 | LLM 31m55s · 工具调用
-     16m33s | 首 token 平均 3.6s · 117 tok/s | 缓存命中 84% | 输入 18.3M
-     tok · 输出 150K tok" — is ONE nowrap line with overflow:hidden +
-     text-overflow:ellipsis (stock StatsLine): on phones the tail readings
-     are ellipsized away with NO way to reveal them — the stock Tooltip
-     that would show the full line is hover/focus-only, dead on touch.
-     Same fix as the message tail clock above: the line itself scrolls
-     horizontally — swipe to see the rest, no scrollbar chrome, and
-     overscroll-behavior:contain keeps the swipe from chaining into the
-     pager flip. text-overflow:clip drops the ellipsis, which would keep
-     painting over the scrolled content's edge. The stock
-     text-align:center stays: for inline content in a BLOCK scroll box the
-     scrollable overflow covers both directions (the unsafe-centering trap
-     is a flexbox-only behavior), so a fitting line stays centered while an
-     overflowing one scrolls end to end. The component's own truncation
-     measure (scrollWidth > clientWidth) is unaffected — it only gates the
-     Tooltip.
-
-     WINDOW-CONFINED SCROLL: with plain overflow-x:auto the scrolling
-     text roams the WHOLE element box — the padding is transparent, so
-     glyphs ride all the way out to the element edge ("到顶") while the
-     resting end keeps its inset gap: the scroll area is visibly bigger
-     than the area the stock line ever displayed in, and the two ends
-     can never look alike. The fix is to confine the scroll to the
-     ORIGINAL display window — the content box inside the stock padding
-     (clearance+16px each side, the column the composer text aligns to):
-     a mask keeps both padding zones permanently EMPTY and clips the
-     scrolling text exactly at those boundaries, at every scroll
-     position. The geometry works out exactly: the scrollable overflow
-     includes the padding, so at either scroll limit the text's
-     start/end ink lands precisely ON the window boundary — no dead
-     overshoot, and the resting text is never under the mask's
-     transparent zone, so nothing fully visible is ever dimmed (no
-     fade ramps anywhere — earlier fade/scroll-driven attempts treated
-     the symptom and were removed). text-align:center stays: a fitting
-     line still centers (its glyphs sit inside the opaque window
-     untouched), an overflowing one scrolls within it. mask-image is
-     anchored to the element box (it does not scroll with the content),
-     which is exactly the behavior wanted; the var() carries a 0px
-     fallback so an undefined clearance degrades to a plain 16px inset
-     rather than dropping the declaration. Both mask-image spellings
-     are written out — iOS Safari still requires the -webkit- prefix.
-     Keyed off the slot anchor, never the hashed class: the
-     conversation.composer.dock outlet (a display:contents div) has exactly
-     one shipped occupant — StatsLine, id 'stats', order 0 — and Tooltip
-     cloneElements its child (no wrapper node), so the readout div is the
-     outlet's first child element. todo/queue strips live in the SIBLING
-     conversation.input.dock slot and can never match. */
+     StatsPills is a two-item flex row mounted above the composer card. The
+     stock row follows the narrow chat content width and reserves 28px on both
+     sides, which needlessly hides the tail of values such as "35 轮 · 206 步".
+     On mobile the row bleeds through the composer's 12px side clearance, uses
+     the full phone width, and centers the two pills with a fixed 5px gap. */
 
   [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div:first-child {
-    overflow-x: auto;
-    overflow-y: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 5px;
+    align-self: stretch;
+    width: auto;
+    max-width: none;
+    margin-right: -12px;
+    margin-left: -12px;
+    box-sizing: border-box;
+    padding: 4px 0 0;
+    overflow: hidden;
     text-overflow: clip;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
-    -webkit-mask-image: linear-gradient(to right,
-      transparent 0,
-      transparent calc(var(--dsh-composer-side-clearance, 0px) + 16px),
-      #000 calc(var(--dsh-composer-side-clearance, 0px) + 16px),
-      #000 calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
-      transparent calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
-      transparent 100%);
-    mask-image: linear-gradient(to right,
-      transparent 0,
-      transparent calc(var(--dsh-composer-side-clearance, 0px) + 16px),
-      #000 calc(var(--dsh-composer-side-clearance, 0px) + 16px),
-      #000 calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
-      transparent calc(100% - var(--dsh-composer-side-clearance, 0px) - 16px),
-      transparent 100%);
+    white-space: nowrap;
   }
 
-  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div:first-child::-webkit-scrollbar {
-    display: none;
+  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div:first-child > span {
+    flex: 0 1 auto;
+    min-width: 0;
   }
+
+  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div:first-child > span:first-child {
+    margin-left: 0;
+  }
+
+  [data-dsh-mobile] [data-slot='conversation.composer.dock'] > div:first-child > span:last-child {
+    margin-right: 0;
+  }
+
 
   /* ---------- session header (mobile fit) ----------
 
