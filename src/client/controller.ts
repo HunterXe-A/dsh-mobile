@@ -568,6 +568,11 @@ export class MobileController implements MobileControllerHandle {
    *  - re-collapse (e.g. right sidebar open resets narrowExpanded) →
    *    re-expand to maintain the always-open phone layout */
   readonly #onFrameCollapseChange = (): void => {
+    // The rail/expanded transition changes the rendered sidebar width, so the
+    // cached chat-page edge must be measured again before the next scroll.
+    // Otherwise progress is computed from the old rail width and the chat card
+    // can retain the -48px overscroll offset on the full-width chat page.
+    this.#cachedChatLeft = -1
     if (!findFrame()?.hasAttribute('data-sidebar-collapsed')) {
       this.#expandPending = false
     } else {

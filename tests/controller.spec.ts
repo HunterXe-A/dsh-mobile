@@ -134,6 +134,40 @@ describe('MobileController always-open sidebar + pager', () => {
     expect(controller.isSidebarOpen()).toBe(false)
   })
 
+  it('invalidates the cached chat edge when the sidebar expands from the rail', async () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const sidebar = frame.firstElementChild as HTMLElement
+    let sidebarWidth = 72
+    Object.defineProperty(sidebar, 'offsetWidth', {
+      configurable: true,
+      get: () => sidebarWidth,
+    })
+    // React applies the expand on a later render in the real AppFrame. Keep
+    // the toggle pending so mount first caches the rail width.
+    const toggle = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    })
+    const controller = makeController({ toggleSidebar: toggle })
+    controller.mount()
+    expect(toggle).toHaveBeenCalledTimes(1)
+
+    // The sidebar expands without a viewport resize; the chat page's snap edge
+    // therefore changes from the rail width to the full sidebar width.
+    sidebarWidth = 300
+    frame.removeAttribute('data-sidebar-collapsed')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    frame.scrollLeft = 300
+    frame.dispatchEvent(new Event('scroll'))
+
+    // A stale 72px cache would clamp progress to 1 and leave the chat card at
+    // translateX(-48px). The expanded edge must produce the resting transform.
+    expect(frame.style.getPropertyValue('--dshm-offset-x')).not.toBe('-48px')
+    expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
+  })
+
   it('state changes do NOT flip the pager (the page is user-driven)', async () => {
     stubMatchMedia(true)
     const frame = makeFrame()
