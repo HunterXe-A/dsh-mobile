@@ -199,9 +199,10 @@
      scrolling, immune to main-thread latency, so fast swipes never segment.
      The frame has exactly two pages, so its scroll range [0, chatLeft] maps
      1:1 onto the flip progress. transform runs composited; the chrome is a
-     second, steps()-quantized animation so it repaints at most 4 times. The
-     card pivots from a fixed 50% origin — the translate3d(±50%) bookends fold
-     the moving transform-origin into the transform itself. */
+     second animation whose keyframes carry the same 1/4-reveal staircase the
+     JS fallback writes, so it repaints at most 4 times. The card pivots from
+     a fixed 50% origin — the translate3d(±50%) bookends fold the moving
+     transform-origin into the transform itself. */
   @keyframes dshm-flip {
     from {
       transform: translate3d(50%, 0, 0) rotateY(-10deg) scale(0.94) translate3d(-50%, 0, 0);
@@ -211,20 +212,49 @@
     }
   }
 
+  /* Chrome staircase — the five quantized states the JS fallback writes
+     (stepped = round(reveal * 4) / 4, transitions at odd eighths of the
+     timeline). Explicit keyframes because steps(4, jump-none) only yields two
+     jumps at t=1/3 and 2/3: the chrome would then pop in mid-swipe instead of
+     appearing faintly right after the chat rest and building in three even
+     steps. Each segment's steps(1, end) holds its state until the next
+     keyframe, so the chrome still repaints at most 4 times per swipe. */
   @keyframes dshm-flip-chrome {
-    from {
+    0% {
       border-radius: 16px;
       box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
+      animation-timing-function: steps(1, end);
     }
-    to {
+    12.5% {
+      border-radius: 12px;
+      box-shadow: 0 4.5px 21px color-mix(in srgb, var(--dsw-static-neutral-1000) 12%, transparent);
+      animation-timing-function: steps(1, end);
+    }
+    37.5% {
+      border-radius: 8px;
+      box-shadow: 0 3px 14px color-mix(in srgb, var(--dsw-static-neutral-1000) 8%, transparent);
+      animation-timing-function: steps(1, end);
+    }
+    62.5% {
+      border-radius: 4px;
+      box-shadow: 0 1.5px 7px color-mix(in srgb, var(--dsw-static-neutral-1000) 4%, transparent);
+      animation-timing-function: steps(1, end);
+    }
+    87.5% {
+      border-radius: 0px;
+      box-shadow: 0 0 0 color-mix(in srgb, var(--dsw-static-neutral-1000) 0%, transparent);
+    }
+    100% {
       border-radius: 0px;
       box-shadow: 0 0 0 color-mix(in srgb, var(--dsw-static-neutral-1000) 0%, transparent);
     }
   }
 
   [data-dsh-mobile] [data-dshm-frame] > :nth-child(2)[data-dshm-flipping][data-dshm-scrollanim] {
-    animation: dshm-flip linear both, dshm-flip-chrome steps(4, jump-none) both;
-    /* Declared after the shorthand: `animation` resets animation-timeline. */
+    animation: dshm-flip linear both, dshm-flip-chrome linear both;
+    /* Declared after the shorthand: `animation` resets animation-timeline.
+       The chrome's quantization lives in its keyframes (per-segment
+       steps(1, end)), not in the animation timing. */
     animation-timeline: scroll(nearest inline), scroll(nearest inline);
   }
 
