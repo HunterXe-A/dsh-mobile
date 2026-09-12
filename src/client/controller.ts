@@ -163,14 +163,24 @@ const TASK_WRITE_TOOLS = new Set([
  *  (思考中 → 思考中. → 思考中.. → 思考中... → 思考中 → …). */
 const TASK_DOTS_STEP_MS = 400
 
+/** Horizontal drift (px) that proves a pager swipe before the chat card's
+ *  compositing layer is pre-warmed. */
+const FLIP_INTENT_PX = 6
+
+/** The rendered width of the sidebar page column (0 before first layout). */
+function sidebarPageLeft(frame: HTMLElement): number {
+  const sidebar = frame.firstElementChild
+  return sidebar instanceof HTMLElement ? sidebar.offsetWidth : 0
+}
+
 /**
  * The pager's chat-page snap position: the rendered width of the sidebar
  * page column (the always-open card). Falls back to the frame's own width
  * while the layout has not settled (offsetWidth is 0 before first layout).
  */
 function chatPageLeft(frame: HTMLElement): number {
-  const sidebar = frame.firstElementChild
-  if (sidebar instanceof HTMLElement && sidebar.offsetWidth > 0) return sidebar.offsetWidth
+  const sidebar = sidebarPageLeft(frame)
+  if (sidebar > 0) return sidebar
   return frame.clientWidth
 }
 
@@ -250,6 +260,12 @@ export class MobileController implements MobileControllerHandle {
    *  tap on the composer from the app's automatic focus. */
   #lastPointerTarget: Element | null = null
   #lastPointerAt = -1
+  /** The live pager gesture: origin, liveness, and the horizontal-intent
+   *  layer-prewarm gate. */
+  #gestureActive = false
+  #pointerStartX = 0
+  #pointerStartY = 0
+  #prewarmed = false
   #expandPending = false
   #mounted = false
   #disposed = false
@@ -367,7 +383,9 @@ export class MobileController implements MobileControllerHandle {
     // from one — the user's own tap still focuses (they want to type), the
     // automatic focus is bounced.
     document.addEventListener('pointerdown', this.#onPointerDownCapture, true)
-    document.addEventListener('pointerup', this.#onPointerUpCapture, true)
+    document.addEventListener('pointermove', this.#onPointerMoveCapture, true)
+    document.addEventListener('pointerup', this.#onPointerEndCapture, true)
+    document.addEventListener('pointercancel', this.#onPointerEndCapture, true)
     document.addEventListener('focusin', this.#onFocusInCapture, true)
     document.addEventListener('keydown', this.#onComposerKeyDown, true)
 
@@ -471,7 +489,9 @@ export class MobileController implements MobileControllerHandle {
     window.removeEventListener('resize', this.#onWindowResize)
     document.removeEventListener('click', this.#onDocClickCapture, true)
     document.removeEventListener('pointerdown', this.#onPointerDownCapture, true)
-    document.removeEventListener('pointerup', this.#onPointerUpCapture, true)
+    document.removeEventListener('pointermove', this.#onPointerMoveCapture, true)
+    document.removeEventListener('pointerup', this.#onPointerEndCapture, true)
+    document.removeEventListener('pointercancel', this.#onPointerEndCapture, true)
     document.removeEventListener('focusin', this.#onFocusInCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
     document.removeEventListener('keydown', this.#onComposerKeyDown, true)
@@ -749,21 +769,52 @@ export class MobileController implements MobileControllerHandle {
 
   /** Record every pointerdown (capture, passive) so the focus-in suppressor
    *  can distinguish the user's own tap on the composer from the app's
-   *  automatic focus. A pointer inside the pager also pre-warms the chat card's
-   *  temporary 3D layer before the first scroll event arrives. */
+   *  automatic focus. The down also re-measures the chat-page edge once per
+   *  gesture — a cheap self-heal for a stale cache the resize/attribute
+   *  observers missed — and records the gesture origin so the layer prewarm
+   *  can wait for a proven horizontal intent. */
   readonly #onPointerDownCapture = (event: PointerEvent): void => {
     const target = event.target
     this.#lastPointerTarget = target instanceof Element ? target : null
     this.#lastPointerAt = Date.now()
     const frame = findFrame()
-    if (this.#mql?.matches && frame !== null && target instanceof Element && frame.contains(target)) {
-      chatPageCard(frame)?.setAttribute('data-dshm-flipping', '')
+    if (frame === null || !this.#mql?.matches || !(target instanceof Element) || !frame.contains(target)) {
+      this.#gestureActive = false
+      return
     }
+    const measured = sidebarPageLeft(frame)
+    if (measured > 0 && measured !== this.#cachedChatLeft) this.#cachedChatLeft = measured
+    this.#gestureActive = true
+    this.#pointerStartX = event.clientX
+    this.#pointerStartY = event.clientY
+    this.#prewarmed = false
   }
 
-  /** Remove the pre-warmed layer after a plain tap. A real swipe keeps the
-   *  marker until the next scroll frame reaches the idle state. */
-  readonly #onPointerUpCapture = (): void => {
+  /** Pre-warm the chat card's compositing layer only once the gesture is
+   *  PROVEN horizontal (|dx| > |dy|, past a small threshold). Promoting the
+   *  full-screen card at pointerdown raced the browser's gesture arbitration,
+   *  ate the first pan frames and left the sidebar un-swipeable until a
+   *  vertical scroll re-warmed the compositor; promoting after the pan is
+   *  arbitrated keeps the swipe intact. */
+  readonly #onPointerMoveCapture = (event: PointerEvent): void => {
+    if (!this.#gestureActive || this.#prewarmed) return
+    const target = event.target
+    const frame = findFrame()
+    if (frame === null || !this.#mql?.matches || !(target instanceof Element) || !frame.contains(target)) return
+    const dx = Math.abs(event.clientX - this.#pointerStartX)
+    const dy = Math.abs(event.clientY - this.#pointerStartY)
+    if (dx < FLIP_INTENT_PX || dx <= dy) return
+    this.#prewarmed = true
+    chatPageCard(frame)?.setAttribute('data-dshm-flipping', '')
+  }
+
+  /** Release the pre-warmed layer when the gesture ends without a live flip;
+   *  a real swipe keeps the marker until the next scroll frame idles it.
+   *  Native scrolling takes over with pointercancel (not pointerup), so both
+   *  endings release. */
+  readonly #onPointerEndCapture = (): void => {
+    this.#gestureActive = false
+    this.#prewarmed = false
     const frame = findFrame()
     if (this.#flipState?.active === true || frame === null) return
     chatPageCard(frame)?.removeAttribute('data-dshm-flipping')

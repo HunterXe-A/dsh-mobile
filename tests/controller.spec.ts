@@ -204,16 +204,66 @@ describe('MobileController always-open sidebar + pager', () => {
     expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 
-  it('pre-warms the chat card layer only for a pager interaction', () => {
+  it('pre-warms the chat card layer only after a horizontal intent', () => {
     stubMatchMedia(true)
     const frame = makeFrame()
     const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     const chatCard = frame.children[1] as HTMLElement
 
-    chatCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    // pointerdown no longer promotes the layer: the promotion must not race
+    // the browser's gesture arbitration.
+    chatCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 300 }))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+
+    // Vertical drift first: the gesture is not horizontal yet.
+    chatCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 200, clientY: 320 }))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+
+    // Horizontal intent: the layer is promoted after the pan is arbitrated.
+    chatCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 240, clientY: 322 }))
     expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
+
     document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+  })
+
+  it('releases the pre-warmed layer on pointercancel too', () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    const chatCard = frame.children[1] as HTMLElement
+
+    chatCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 300 }))
+    chatCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 240, clientY: 300 }))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
+    document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+  })
+
+  it('re-measures the chat-page edge on pointerdown when the cache went stale', () => {
+    stubMatchMedia(true)
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 0 })
+    const frame = makeFrame()
+    const sidebar = frame.firstElementChild as HTMLElement
+    let sidebarWidth = 72
+    Object.defineProperty(sidebar, 'offsetWidth', { configurable: true, get: () => sidebarWidth })
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+
+    // The sidebar column widens without a viewport/attribute change the
+    // observers would catch; the gesture-level self-heal re-measures once.
+    sidebarWidth = 300
+    frame.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }))
+    frame.scrollLeft = 300
+    frame.dispatchEvent(new Event('scroll'))
+
+    // A stale 72px cache would clamp progress to 1 and leave the chat card
+    // translated/rotated while resting on the chat page.
+    const chatCard = frame.children[1] as HTMLElement
+    expect(chatCard.style.getPropertyValue('transform')).toBe('')
+    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
     expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 
