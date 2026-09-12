@@ -64,7 +64,9 @@ function toggleSidebarSpy() { return vi.fn() }
 /** Track every mounted controller so afterEach can dispose it. */
 const liveControllers: MobileController[] = []
 function makeController(options: MobileControllerOptions): MobileController {
-  const controller = new MobileController(options)
+  // Default to the JS fallback so tests are deterministic regardless of the
+  // engine's CSS.supports; the scroll-driven mode has its own test below.
+  const controller = new MobileController({ scrollAnimations: false, ...options })
   liveControllers.push(controller)
   return controller
 }
@@ -169,7 +171,8 @@ describe('MobileController always-open sidebar + pager', () => {
     expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+    // The composited layer is granted once at bind time and stays warm.
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
     expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 
@@ -189,6 +192,10 @@ describe('MobileController always-open sidebar + pager', () => {
     expect(chatCard.style.getPropertyValue('transform'))
       .toBe('translate3d(0px, 0, 0) rotateY(-5deg) scale(0.97)')
     expect(chatCard.style.getPropertyValue('transform-origin')).toBe('75% 50%')
+    // Chrome follows the gesture continuously: half-reveal at the midpoint.
+    expect(chatCard.style.getPropertyValue('border-radius')).toBe('8.00px')
+    expect(chatCard.style.getPropertyValue('box-shadow'))
+      .toBe('0 3.00px 14.00px color-mix(in srgb, var(--dsw-static-neutral-1000) 8.00%, transparent)')
     expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
     expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
@@ -198,48 +205,91 @@ describe('MobileController always-open sidebar + pager', () => {
     frame.dispatchEvent(new Event('scroll'))
     expect(chatCard.style.getPropertyValue('transform')).toBe('')
     expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
+    expect(chatCard.style.getPropertyValue('border-radius')).toBe('')
+    expect(chatCard.style.getPropertyValue('box-shadow')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+    // The transform clears, but the warm layer stays granted for the session.
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
     expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 
-  it('pre-warms the chat card layer only after a horizontal intent', () => {
+  it('rewrites chrome only when the quantized step changes', () => {
     stubMatchMedia(true)
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    })
     const frame = makeFrame()
     const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     const chatCard = frame.children[1] as HTMLElement
 
-    // pointerdown no longer promotes the layer: the promotion must not race
-    // the browser's gesture arbitration.
-    chatCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 300 }))
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+    frame.scrollLeft = 150 // chatLeft 300, reveal 0.5 → chrome step 2/4
+    frame.dispatchEvent(new Event('scroll'))
+    expect(chatCard.style.getPropertyValue('border-radius')).toBe('8.00px')
 
-    // Vertical drift first: the gesture is not horizontal yet.
-    chatCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 200, clientY: 320 }))
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
-
-    // Horizontal intent: the layer is promoted after the pan is arbitrated.
-    chatCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 240, clientY: 322 }))
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
-
-    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+    // Same chrome step, new transform frame: radius/shadow are not rewritten
+    // (the sentinels survive), while the transform still updates per frame.
+    chatCard.style.setProperty('border-radius', 'sentinel')
+    chatCard.style.setProperty('box-shadow', 'sentinel')
+    frame.scrollLeft = 140 // reveal 0.533 → the same 2/4 step
+    frame.dispatchEvent(new Event('scroll'))
+    expect(chatCard.style.getPropertyValue('transform')).not.toBe('')
+    expect(chatCard.style.getPropertyValue('transform'))
+      .not.toBe('translate3d(0px, 0, 0) rotateY(-5deg) scale(0.97)')
+    expect(chatCard.style.getPropertyValue('border-radius')).toBe('sentinel')
+    expect(chatCard.style.getPropertyValue('box-shadow')).toBe('sentinel')
   })
 
-  it('releases the pre-warmed layer on pointercancel too', () => {
+  it('keeps the chat card layer warm across gestures and page rests', () => {
     stubMatchMedia(true)
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    })
     const frame = makeFrame()
     const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
     const chatCard = frame.children[1] as HTMLElement
 
-    chatCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 300 }))
-    chatCard.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 240, clientY: 300 }))
+    // The composited layer is granted once at bind time and never torn down
+    // per gesture: create/destroy re-rasterized the full-screen card twice
+    // per swipe — the heaviest remaining cost on long conversations.
     expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
-    document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }))
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+
+    frame.scrollLeft = 150
+    frame.dispatchEvent(new Event('scroll'))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
+
+    frame.scrollLeft = 300
+    frame.dispatchEvent(new Event('scroll'))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
+  })
+
+  it('hands the flip to scroll-driven animations when supported', () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy(), scrollAnimations: true })
+    controller.mount()
+    const chatCard = frame.children[1] as HTMLElement
+
+    // The animation marker rides the warm-layer grant at bind time.
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
+    expect(chatCard.hasAttribute('data-dshm-scrollanim')).toBe(true)
+
+    // The compositor drives the flip in lockstep with the scroll: no inline
+    // styles are written per frame, so fast swipes never segment.
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    })
+    frame.scrollLeft = 150
+    frame.dispatchEvent(new Event('scroll'))
+    expect(chatCard.style.getPropertyValue('transform')).toBe('')
+    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
+    expect(chatCard.style.getPropertyValue('border-radius')).toBe('')
+    expect(chatCard.style.getPropertyValue('box-shadow')).toBe('')
   })
 
   it('re-measures the chat-page edge on pointerdown when the cache went stale', () => {
@@ -264,7 +314,7 @@ describe('MobileController always-open sidebar + pager', () => {
     const chatCard = frame.children[1] as HTMLElement
     expect(chatCard.style.getPropertyValue('transform')).toBe('')
     expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
   })
 
   it('state changes do NOT flip the pager (the page is user-driven)', async () => {

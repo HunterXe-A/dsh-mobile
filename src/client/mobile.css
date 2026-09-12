@@ -172,7 +172,10 @@
      shadow inside the screen, exactly like OpenCodeUI's full-width mobile
      chat. The inner layout is untouched; only the card chrome changes.
       The card itself uses rotateY/scale during the gesture; descendants stay flattened.
-      No nested 3D context is needed. */
+      No nested 3D context is needed. On engines with scroll-driven animations
+      the whole flip (transform + chrome) rides the frame's scroll timeline on
+      the compositor; otherwise the controller interpolates it inline with the
+      swipe progress — these declarations are the resting / fallback base. */
   [data-dsh-mobile] [data-dshm-frame] > :nth-child(2) {
     border: none;
     border-radius: 16px;
@@ -183,14 +186,52 @@
     transform-origin: 50% 50%;
   }
 
-  /* Keep the card itself on a compositor layer during the live gesture. */
+  /* The card keeps ONE compositor layer for the whole mobile session —
+     creating and destroying it per gesture re-rasterized the full screen
+     twice per swipe. preserve-3d is gone, so no descendant is trapped. */
   [data-dsh-mobile] [data-dshm-frame] > :nth-child(2)[data-dshm-flipping] {
     will-change: transform;
   }
 
-  /* Chat page (resting on the conversation): full-bleed, no card chrome —
+  /* Scroll-driven flip (Chrome/WebView 115+, Safari 26+; the controller sets
+     data-dshm-scrollanim only after a feature detect): the flip rides the
+     frame's own scroll timeline on the compositor — in lockstep with native
+     scrolling, immune to main-thread latency, so fast swipes never segment.
+     The frame has exactly two pages, so its scroll range [0, chatLeft] maps
+     1:1 onto the flip progress. transform runs composited; the chrome is a
+     second, steps()-quantized animation so it repaints at most 4 times. The
+     card pivots from a fixed 50% origin — the translate3d(±50%) bookends fold
+     the moving transform-origin into the transform itself. */
+  @keyframes dshm-flip {
+    from {
+      transform: translate3d(50%, 0, 0) rotateY(-10deg) scale(0.94) translate3d(-50%, 0, 0);
+    }
+    to {
+      transform: translate3d(0%, 0, 0) rotateY(0deg) scale(1) translate3d(0%, 0, 0);
+    }
+  }
+
+  @keyframes dshm-flip-chrome {
+    from {
+      border-radius: 16px;
+      box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
+    }
+    to {
+      border-radius: 0px;
+      box-shadow: 0 0 0 color-mix(in srgb, var(--dsw-static-neutral-1000) 0%, transparent);
+    }
+  }
+
+  [data-dsh-mobile] [data-dshm-frame] > :nth-child(2)[data-dshm-flipping][data-dshm-scrollanim] {
+    animation: dshm-flip linear both, dshm-flip-chrome steps(4, jump-none) both;
+    /* Declared after the shorthand: `animation` resets animation-timeline. */
+    animation-timeline: scroll(nearest inline), scroll(nearest inline);
+  }
+
+  /* Chat page at rest (inline chrome cleared): full-bleed, no card chrome —
      square corners and no shadow so nothing inside the screen suggests a
-     card. Only the exposed sliver state (sidebar page) keeps the radius. */
+     card. While a flip is live the controller's inline chrome overrides this
+     rule and interpolates with the swipe progress. */
   [data-dsh-mobile][data-dshm-page='chat'] [data-dshm-frame] > :nth-child(2) {
     border-radius: 0;
     box-shadow: none;

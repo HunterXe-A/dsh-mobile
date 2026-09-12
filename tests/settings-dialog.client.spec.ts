@@ -94,6 +94,9 @@ describe('mobile.css settings-dialog contract', () => {
     for (const body of bodies) {
       const selector = body.split(/\{/)[0]?.trim() ?? ''
       if (selector === '' || /^@(media|supports|keyframes|font-face|container)/.test(selector)) continue
+      // @keyframes inner selectors (from/to/percentages) carry no scope —
+      // they are not style rules.
+      if (/^(from|to|-?\d+(?:\.\d+)?%)$/.test(selector)) continue
       expect(selector, `unscoped selector: ${selector}`).toContain(`[data-dsh-mobile]`)
     }
   })

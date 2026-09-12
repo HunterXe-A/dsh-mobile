@@ -163,9 +163,6 @@ const TASK_WRITE_TOOLS = new Set([
  *  (思考中 → 思考中. → 思考中.. → 思考中... → 思考中 → …). */
 const TASK_DOTS_STEP_MS = 400
 
-/** Horizontal drift (px) that proves a pager swipe before the chat card's
- *  compositing layer is pre-warmed. */
-const FLIP_INTENT_PX = 6
 
 /** The rendered width of the sidebar page column (0 before first layout). */
 function sidebarPageLeft(frame: HTMLElement): number {
@@ -201,6 +198,17 @@ const LEGACY_FLIP_PROPERTIES = [
 export interface MobileControllerOptions {
   /** Toggle the sidebar panel (frame-owned layout action). */
   toggleSidebar: () => void
+  /** Force scroll-driven flip animations on/off (tests). Undefined = detect. */
+  scrollAnimations?: boolean
+}
+
+/** Feature-detect scroll-driven animations (Chrome/WebView 115+, Safari 26+).
+ *  The flip rides the frame's own scroll timeline on the compositor — in
+ *  lockstep with native scrolling, immune to main-thread latency. */
+const supportsScrollAnimations = (): boolean => {
+  return typeof CSS !== 'undefined'
+    && typeof CSS.supports === 'function'
+    && CSS.supports('animation-timeline', 'scroll(nearest inline)')
 }
 
 /** Test-facing surface of the controller (the class keeps everything else private). */
@@ -220,6 +228,8 @@ export interface MobileControllerHandle {
 /** The DOM-side controller (see module doc). */
 export class MobileController implements MobileControllerHandle {
   readonly #options: MobileControllerOptions
+  /** Whether the flip is delegated to scroll-driven CSS animations. */
+  readonly #scrollAnimations: boolean
   #html: HTMLElement | null = null
   #mql: MediaQueryList | null = null
   #frameObserver: MutationObserver | null = null
@@ -260,12 +270,6 @@ export class MobileController implements MobileControllerHandle {
    *  tap on the composer from the app's automatic focus. */
   #lastPointerTarget: Element | null = null
   #lastPointerAt = -1
-  /** The live pager gesture: origin, liveness, and the horizontal-intent
-   *  layer-prewarm gate. */
-  #gestureActive = false
-  #pointerStartX = 0
-  #pointerStartY = 0
-  #prewarmed = false
   #expandPending = false
   #mounted = false
   #disposed = false
@@ -284,6 +288,7 @@ export class MobileController implements MobileControllerHandle {
   /** @param options - apply-world callbacks. */
   constructor(options: MobileControllerOptions) {
     this.#options = options
+    this.#scrollAnimations = options.scrollAnimations ?? supportsScrollAnimations()
   }
 
   /** True while the frame shows the sidebar expanded (not the rail). */
@@ -383,9 +388,6 @@ export class MobileController implements MobileControllerHandle {
     // from one — the user's own tap still focuses (they want to type), the
     // automatic focus is bounced.
     document.addEventListener('pointerdown', this.#onPointerDownCapture, true)
-    document.addEventListener('pointermove', this.#onPointerMoveCapture, true)
-    document.addEventListener('pointerup', this.#onPointerEndCapture, true)
-    document.addEventListener('pointercancel', this.#onPointerEndCapture, true)
     document.addEventListener('focusin', this.#onFocusInCapture, true)
     document.addEventListener('keydown', this.#onComposerKeyDown, true)
 
@@ -489,9 +491,6 @@ export class MobileController implements MobileControllerHandle {
     window.removeEventListener('resize', this.#onWindowResize)
     document.removeEventListener('click', this.#onDocClickCapture, true)
     document.removeEventListener('pointerdown', this.#onPointerDownCapture, true)
-    document.removeEventListener('pointermove', this.#onPointerMoveCapture, true)
-    document.removeEventListener('pointerup', this.#onPointerEndCapture, true)
-    document.removeEventListener('pointercancel', this.#onPointerEndCapture, true)
     document.removeEventListener('focusin', this.#onFocusInCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
     document.removeEventListener('keydown', this.#onComposerKeyDown, true)
@@ -510,6 +509,9 @@ export class MobileController implements MobileControllerHandle {
     if (frame !== null) {
       frame.removeEventListener('scroll', this.#onPagerScroll)
       frame.removeAttribute(FRAME_MARKER)
+      const card = chatPageCard(frame)
+      card?.removeAttribute('data-dshm-flipping')
+      card?.removeAttribute('data-dshm-scrollanim')
     }
     if (this.#viewportMeta !== null) {
       if (this.#viewportOriginal !== null) this.#viewportMeta.content = this.#viewportOriginal
@@ -588,13 +590,20 @@ export class MobileController implements MobileControllerHandle {
     card?.style.removeProperty('--dshm-flip-origin')
     card?.style.removeProperty('transform')
     card?.style.removeProperty('transform-origin')
+    card?.style.removeProperty('border-radius')
+    card?.style.removeProperty('box-shadow')
+    // The card's flipping marker is the warm-layer grant: it lives for the
+    // whole mobile session (bind → dispose / breakpoint leave) and is NOT
+    // removed here — only the html-level legacy attr is.
     this.#html?.removeAttribute('data-dshm-flipping')
-    card?.removeAttribute('data-dshm-flipping')
     this.#flipState = null
   }
 
   /** Apply a flip state only when its visual output changed. */
   readonly #syncFlip = (frame: HTMLElement, chatLeft: number): void => {
+    // Scroll-driven animations drive the flip on the compositor in lockstep
+    // with the scroll; inline styles here would only fight them.
+    if (this.#scrollAnimations) return
     const next = calculatePagerFlip(frame.scrollLeft, chatLeft)
     if (samePagerFlip(this.#flipState, next)) return
 
@@ -602,7 +611,10 @@ export class MobileController implements MobileControllerHandle {
     if (next.active && card !== null) {
       card.style.setProperty('transform', next.transform)
       card.style.setProperty('transform-origin', next.origin)
-      card.setAttribute('data-dshm-flipping', '')
+      // Chrome invalidates paint (transform does not): only rewrite it when
+      // the quantized value actually stepped.
+      if (this.#flipState?.radius !== next.radius) card.style.setProperty('border-radius', next.radius)
+      if (this.#flipState?.shadow !== next.shadow) card.style.setProperty('box-shadow', next.shadow)
       this.#flipState = next
       return
     }
@@ -658,6 +670,19 @@ export class MobileController implements MobileControllerHandle {
     if (frame === null) return
     // 给 frame 打标记，供 CSS 和后续查询使用。
     frame.setAttribute(FRAME_MARKER, '')
+    // The chat card keeps ONE composited layer for the whole mobile session:
+    // granting it at bind time avoids re-rasterizing the full-screen card
+    // twice per gesture (create at swipe start, destroy at rest) — the
+    // heaviest remaining per-swipe cost. preserve-3d is long gone, so no
+    // sticky/fixed descendant is ever trapped in a 3D context.
+    if (this.#mql?.matches ?? false) {
+      const card = chatPageCard(frame)
+      card?.setAttribute('data-dshm-flipping', '')
+      if (this.#scrollAnimations) card?.setAttribute('data-dshm-scrollanim', '')
+    }
+    // A stale inline transform-origin from an older fallback session would
+    // break the keyframe geometry (animations do not touch transform-origin).
+    this.#clearFlipStyles(frame)
     this.#frameObserver = new MutationObserver(this.#onFrameCollapseChange)
     this.#frameObserver.observe(frame, {
       attributes: true,
@@ -687,9 +712,15 @@ export class MobileController implements MobileControllerHandle {
     const frame = findFrame()
     if (!mobile) {
       this.#clearFlipStyles(frame)
+      const card = chatPageCard(frame)
+      card?.removeAttribute('data-dshm-flipping')
+      card?.removeAttribute('data-dshm-scrollanim')
       this.#html?.removeAttribute(PAGE_ATTR)
       return
     }
+    const card = chatPageCard(frame)
+    card?.setAttribute('data-dshm-flipping', '')
+    if (this.#scrollAnimations) card?.setAttribute('data-dshm-scrollanim', '')
     this.#cachedChatLeft = -1
     this.#ensureSidebarOpen()
     this.#placeOnChat('auto')
@@ -771,53 +802,16 @@ export class MobileController implements MobileControllerHandle {
    *  can distinguish the user's own tap on the composer from the app's
    *  automatic focus. The down also re-measures the chat-page edge once per
    *  gesture — a cheap self-heal for a stale cache the resize/attribute
-   *  observers missed — and records the gesture origin so the layer prewarm
-   *  can wait for a proven horizontal intent. */
+   *  observers missed. It writes NO visual state: the compositing layer is
+   *  granted once at bind time, so nothing here can race gesture arbitration. */
   readonly #onPointerDownCapture = (event: PointerEvent): void => {
     const target = event.target
     this.#lastPointerTarget = target instanceof Element ? target : null
     this.#lastPointerAt = Date.now()
     const frame = findFrame()
-    if (frame === null || !this.#mql?.matches || !(target instanceof Element) || !frame.contains(target)) {
-      this.#gestureActive = false
-      return
-    }
+    if (frame === null || !this.#mql?.matches || !(target instanceof Element) || !frame.contains(target)) return
     const measured = sidebarPageLeft(frame)
     if (measured > 0 && measured !== this.#cachedChatLeft) this.#cachedChatLeft = measured
-    this.#gestureActive = true
-    this.#pointerStartX = event.clientX
-    this.#pointerStartY = event.clientY
-    this.#prewarmed = false
-  }
-
-  /** Pre-warm the chat card's compositing layer only once the gesture is
-   *  PROVEN horizontal (|dx| > |dy|, past a small threshold). Promoting the
-   *  full-screen card at pointerdown raced the browser's gesture arbitration,
-   *  ate the first pan frames and left the sidebar un-swipeable until a
-   *  vertical scroll re-warmed the compositor; promoting after the pan is
-   *  arbitrated keeps the swipe intact. */
-  readonly #onPointerMoveCapture = (event: PointerEvent): void => {
-    if (!this.#gestureActive || this.#prewarmed) return
-    const target = event.target
-    const frame = findFrame()
-    if (frame === null || !this.#mql?.matches || !(target instanceof Element) || !frame.contains(target)) return
-    const dx = Math.abs(event.clientX - this.#pointerStartX)
-    const dy = Math.abs(event.clientY - this.#pointerStartY)
-    if (dx < FLIP_INTENT_PX || dx <= dy) return
-    this.#prewarmed = true
-    chatPageCard(frame)?.setAttribute('data-dshm-flipping', '')
-  }
-
-  /** Release the pre-warmed layer when the gesture ends without a live flip;
-   *  a real swipe keeps the marker until the next scroll frame idles it.
-   *  Native scrolling takes over with pointercancel (not pointerup), so both
-   *  endings release. */
-  readonly #onPointerEndCapture = (): void => {
-    this.#gestureActive = false
-    this.#prewarmed = false
-    const frame = findFrame()
-    if (this.#flipState?.active === true || frame === null) return
-    chatPageCard(frame)?.removeAttribute('data-dshm-flipping')
   }
 
   /** During the post-pick window, bounce automatic focus out of the
