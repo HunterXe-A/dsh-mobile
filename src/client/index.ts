@@ -24,6 +24,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // service now lives in the session-controller package (moved out of the
 // removed client-runtime).
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+// Type-only: pulls the compaction/* SessionEventMap declaration merge — the
+// compaction probe below compares against event types the compaction package
+// merges into the Session event vocabulary; without this import the union
+// lacks them and the comparisons do not typecheck.
+import type {} from '@deepseek-ai/dsh-compaction/types'
 import { MobileController } from './controller.ts'
 // Plugin-owned global mobile sheet (injected as a <style data-plugin> tag).
 import './mobile.css'

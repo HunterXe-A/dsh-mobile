@@ -3,12 +3,10 @@
  * browser half (lib/client.js) wrapped for the harness client-plugin loader.
  * The browser half keeps the loader's platform module table external
  * (react, cordis, ui-slots, web-react, primitives, runtime, layout) and
- * inlines everything else. Two CSS channels compile through lightningcss
- * into <style data-plugin> tags injected at factory execution (removed on
- * unload): `.module.css` becomes a hashed class map plus its tag, while a
- * plain `.css` (the plugin's global mobile sheet) is inlined as a raw tag —
- * the same mechanism the official client bundles use, with no module
- * mapping for the global selectors.
+ * inlines everything else. One CSS channel compiles through lightningcss
+ * into a <style data-plugin> tag injected at factory execution (removed on
+ * unload): a plain `.css` (the plugin's global mobile sheet) is inlined as
+ * a raw tag — the same mechanism the official client bundles use.
  */
 import { readFile } from 'node:fs/promises'
 import { basename, dirname, resolve } from 'node:path'
@@ -31,11 +29,10 @@ const CLIENT_EXTERNALS: readonly string[] = [
   '@deepseek-ai/dsh-client-ui-layout/client',
 ]
 
-const MODULE_CSS_PREFIX = '\0dsh-module-css:'
 const RAW_CSS_PREFIX = '\0dsh-raw-css:'
 const VIRTUAL_SUFFIX = '.mjs'
 
-/** Emit the style-tag injection block shared by both CSS channels. */
+/** Emit the style-tag injection block shared by the CSS channel. */
 function styleTagBlock(tagId: string, css: string): string {
   return [
     `const css = ${JSON.stringify(css)};`,
@@ -91,32 +88,6 @@ export default [
           `client bundle purity: "${source}" is not a platform module (CLIENT_EXTERNALS) — `
           + 'cross-plugin value imports are forbidden; collaborate through cordis services',
         )
-      },
-    }, {
-      // CSS Modules → hashed class map + one injected <style data-plugin> tag.
-      name: 'dsh-css-modules-inline',
-      resolveId(source: string, importer: string | undefined) {
-        if (!source.endsWith('.module.css')) return null
-        const abs = importer !== undefined ? resolve(dirname(importer), source) : source
-        return MODULE_CSS_PREFIX + abs + VIRTUAL_SUFFIX
-      },
-      async load(virtualId: string) {
-        if (!virtualId.startsWith(MODULE_CSS_PREFIX)) return null
-        const fileId = virtualId.slice(MODULE_CSS_PREFIX.length, -VIRTUAL_SUFFIX.length)
-        this.addWatchFile(fileId)
-        const source = await readFile(fileId)
-        const { code, exports: cssExports } = transform({
-          filename: fileId,
-          code: source,
-          cssModules: { pattern: '[hash]_[local]' },
-          minify: true,
-        })
-        const classMap: Record<string, string> = {}
-        for (const [local, exp] of Object.entries(cssExports ?? {})) classMap[local] = exp.name
-        return [
-          styleTagBlock(`${PLUGIN_ID}/${basename(fileId)}`, code.toString()),
-          `export default ${JSON.stringify(classMap)};`,
-        ].join('\n')
       },
     }, {
       // Plain global CSS → one raw injected <style data-plugin> tag, no mapping.

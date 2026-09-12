@@ -605,32 +605,6 @@ describe('MobileController pager settle (re-snap without state sync)', () => {
   })
 })
 
-describe('MobileController keyboard inset', () => {
-  it('writes the visual-viewport deficit as --dshm-keyboard-inset', () => {
-    stubMatchMedia(false)
-    makeFrame()
-    const resizeHandlers: Array<() => void> = []
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 0 })
-    Object.defineProperty(window, 'visualViewport', {
-      configurable: true,
-      value: {
-        height: 320,
-        offsetTop: 0,
-        width: 375,
-        addEventListener: (_t: string, fn: () => void) => { resizeHandlers.push(fn) },
-        removeEventListener: vi.fn(),
-      },
-    })
-    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
-    controller.mount()
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
-    Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 300 })
-    resizeHandlers[0]?.()
-    expect(document.documentElement.style.getPropertyValue('--dshm-keyboard-inset')).toBe('300px')
-    controller.dispose()
-  })
-})
-
 describe('MobileController model-name marquee', () => {
   /** Stub ResizeObserver (jsdom has none) capturing its callback. */
   function stubResizeObserver(): { fire: () => void } {

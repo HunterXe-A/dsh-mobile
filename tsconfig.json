@@ -12,7 +12,6 @@
       "es2022",
       "es2023"
     ],
-    "jsx": "react-jsx",
     "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "noEmit": true

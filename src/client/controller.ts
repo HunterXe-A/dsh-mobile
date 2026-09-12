@@ -21,13 +21,14 @@
 import { calculatePagerFlip, samePagerFlip, type PagerFlipState } from './pager-flip.ts'
 
 /** The narrow breakpoint the pager keys off (PiUI's 768px). */
-export const MOBILE_BREAKPOINT = '(max-width: 768px)'
+const MOBILE_BREAKPOINT = '(max-width: 768px)'
 
 /** The <html> attribute that mirrors the pager page the frame is resting on. */
 export const PAGE_ATTR = 'data-dshm-page'
 
 /** Pager page names (the mirror values of PAGE_ATTR). */
-export type MobilePage = 'sidebar' | 'chat'
+type MobilePage = 'sidebar' | 'chat'
+
 
 /** Wait after the last scroll event before the pager settles. */
 const SCROLL_SETTLE_MS = 200
@@ -212,7 +213,7 @@ const supportsScrollAnimations = (): boolean => {
 }
 
 /** Test-facing surface of the controller (the class keeps everything else private). */
-export interface MobileControllerHandle {
+interface MobileControllerHandle {
   /** True while the frame shows the sidebar expanded (not the rail). */
   isSidebarOpen(): boolean
   /** Return to the chat page (a session picked in the sidebar). */
@@ -710,15 +711,14 @@ export class MobileController implements MobileControllerHandle {
   readonly #onBreakpointChange = (): void => {
     const mobile = this.#mql?.matches ?? false
     const frame = findFrame()
+    const card = frame === null ? null : chatPageCard(frame)
     if (!mobile) {
       this.#clearFlipStyles(frame)
-      const card = chatPageCard(frame)
       card?.removeAttribute('data-dshm-flipping')
       card?.removeAttribute('data-dshm-scrollanim')
       this.#html?.removeAttribute(PAGE_ATTR)
       return
     }
-    const card = chatPageCard(frame)
     card?.setAttribute('data-dshm-flipping', '')
     if (this.#scrollAnimations) card?.setAttribute('data-dshm-scrollanim', '')
     this.#cachedChatLeft = -1
@@ -940,7 +940,7 @@ export class MobileController implements MobileControllerHandle {
     const modeBtn = tablist?.querySelector<HTMLElement>(
       'span[title], button[title]',
     )
-    if (modeBtn !== null && this.#modeButtonHome !== null) {
+    if (modeBtn != null && this.#modeButtonHome !== null) {
       modeBtn.style.removeProperty('margin-left')
       modeBtn.style.removeProperty('flex-shrink')
       modeBtn.style.removeProperty('align-self')
