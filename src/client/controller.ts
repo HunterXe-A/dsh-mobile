@@ -174,6 +174,11 @@ function chatPageLeft(frame: HTMLElement): number {
   return frame.clientWidth
 }
 
+function chatPageCard(frame: HTMLElement): HTMLElement | null {
+  const card = frame.children[1]
+  return card instanceof HTMLElement ? card : null
+}
+
 /** Legacy custom properties left by pre-refactor package versions. */
 const LEGACY_FLIP_PROPERTIES = [
   '--dshm-rotate',
@@ -208,6 +213,7 @@ export class MobileController implements MobileControllerHandle {
   #html: HTMLElement | null = null
   #mql: MediaQueryList | null = null
   #frameObserver: MutationObserver | null = null
+  #frameResizeObserver: ResizeObserver | null = null
   #rootObserver: MutationObserver | null = null
   #composerObserver: MutationObserver | null = null
   #marqueeLabel: HTMLElement | null = null
@@ -229,6 +235,7 @@ export class MobileController implements MobileControllerHandle {
   #mountFrame: number | null = null
   #resizeTimer: number | null = null
   #settleTimer: number | null = null
+  #flipFrame: number | null = null
   #returnTimer: number | null = null
   /** Last seen window.innerWidth — the resize handler only re-anchors the
    *  pager when the WIDTH changed (rotation / split-screen reflows the page
@@ -360,6 +367,7 @@ export class MobileController implements MobileControllerHandle {
     // from one — the user's own tap still focuses (they want to type), the
     // automatic focus is bounced.
     document.addEventListener('pointerdown', this.#onPointerDownCapture, true)
+    document.addEventListener('pointerup', this.#onPointerUpCapture, true)
     document.addEventListener('focusin', this.#onFocusInCapture, true)
     document.addEventListener('keydown', this.#onComposerKeyDown, true)
 
@@ -386,13 +394,13 @@ export class MobileController implements MobileControllerHandle {
         characterData: true,
       })
     }
+    this.#ensureFrameObserver()
     // Layout-only overflow changes (row squeeze, font load) do not mutate
     // the tree: watch the label's box too. jsdom has no ResizeObserver, so
     // the guard keeps tests running on the mutation path alone.
     if (typeof ResizeObserver !== 'undefined') {
       this.#marqueeRO = new ResizeObserver(() => { this.#requestMarqueeSync() })
     }
-    this.#ensureFrameObserver()
     this.#requestMarqueeSync()
 
     // The always-open phone layout: expand the sidebar once (AppFrame
@@ -414,6 +422,8 @@ export class MobileController implements MobileControllerHandle {
     this.#mounted = false
     this.#frameObserver?.disconnect()
     this.#frameObserver = null
+    this.#frameResizeObserver?.disconnect()
+    this.#frameResizeObserver = null
     this.#conversationObserver?.disconnect()
     this.#conversationObserver = null
     this.#conversationTarget = null
@@ -461,15 +471,17 @@ export class MobileController implements MobileControllerHandle {
     window.removeEventListener('resize', this.#onWindowResize)
     document.removeEventListener('click', this.#onDocClickCapture, true)
     document.removeEventListener('pointerdown', this.#onPointerDownCapture, true)
+    document.removeEventListener('pointerup', this.#onPointerUpCapture, true)
     document.removeEventListener('focusin', this.#onFocusInCapture, true)
     document.removeEventListener('visibilitychange', this.#onVisibilityChange)
     document.removeEventListener('keydown', this.#onComposerKeyDown, true)
-    for (const timer of [this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#marqueeFrame, this.#returnTimer, this.#taskStatusFrame, this.#modeRelocateFrame]) {
-      if (timer !== null) (timer === this.#mountFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame || timer === this.#modeRelocateFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
+    for (const timer of [this.#mountFrame, this.#resizeTimer, this.#settleTimer, this.#flipFrame, this.#marqueeFrame, this.#returnTimer, this.#taskStatusFrame, this.#modeRelocateFrame]) {
+      if (timer !== null) (timer === this.#mountFrame || timer === this.#flipFrame || timer === this.#marqueeFrame || timer === this.#taskStatusFrame || timer === this.#modeRelocateFrame ? cancelAnimationFrame : window.clearTimeout)(timer)
     }
     this.#mountFrame = null
     this.#resizeTimer = null
     this.#settleTimer = null
+    this.#flipFrame = null
     this.#marqueeFrame = null
     this.#returnTimer = null
     this.#taskStatusFrame = null
@@ -529,11 +541,14 @@ export class MobileController implements MobileControllerHandle {
     this.#options.toggleSidebar()
   }
 
-  /** Read the cached chat-page edge, refreshing when the scroll position proves
-   *  the cache is stale (for example while the sidebar expands from its rail). */
+  readonly #onFrameResize = (): void => {
+    this.#cachedChatLeft = -1
+  }
+
+  /** Read the cached chat-page edge, refreshing only after a layout change. */
   readonly #getChatLeft = (frame: HTMLElement): number => {
     let chatLeft = this.#cachedChatLeft
-    if (chatLeft <= 0 || frame.scrollLeft > chatLeft) {
+    if (chatLeft < 0) {
       chatLeft = chatPageLeft(frame)
       this.#cachedChatLeft = chatLeft > 0 ? chatLeft : -1
     }
@@ -542,10 +557,19 @@ export class MobileController implements MobileControllerHandle {
 
   /** Remove all flip styles, including values from older plugin versions. */
   readonly #clearFlipStyles = (frame: HTMLElement | null): void => {
-    for (const property of ['--dshm-flip-transform', '--dshm-flip-origin', ...LEGACY_FLIP_PROPERTIES]) {
+    const card = frame === null ? null : chatPageCard(frame)
+    for (const property of LEGACY_FLIP_PROPERTIES) {
       frame?.style.removeProperty(property)
+      card?.style.removeProperty(property)
     }
+    frame?.style.removeProperty('--dshm-flip-transform')
+    frame?.style.removeProperty('--dshm-flip-origin')
+    card?.style.removeProperty('--dshm-flip-transform')
+    card?.style.removeProperty('--dshm-flip-origin')
+    card?.style.removeProperty('transform')
+    card?.style.removeProperty('transform-origin')
     this.#html?.removeAttribute('data-dshm-flipping')
+    card?.removeAttribute('data-dshm-flipping')
     this.#flipState = null
   }
 
@@ -554,11 +578,11 @@ export class MobileController implements MobileControllerHandle {
     const next = calculatePagerFlip(frame.scrollLeft, chatLeft)
     if (samePagerFlip(this.#flipState, next)) return
 
-    const active = next.active
-    if (active) {
-      frame.style.setProperty('--dshm-flip-transform', next.transform)
-      frame.style.setProperty('--dshm-flip-origin', next.origin)
-      this.#html?.setAttribute('data-dshm-flipping', '')
+    const card = chatPageCard(frame)
+    if (next.active && card !== null) {
+      card.style.setProperty('transform', next.transform)
+      card.style.setProperty('transform-origin', next.origin)
+      card.setAttribute('data-dshm-flipping', '')
       this.#flipState = next
       return
     }
@@ -619,6 +643,12 @@ export class MobileController implements MobileControllerHandle {
       attributes: true,
       attributeFilter: ['data-sidebar-collapsed'],
     })
+    if (typeof ResizeObserver !== 'undefined') {
+      this.#frameResizeObserver = new ResizeObserver(this.#onFrameResize)
+      this.#frameResizeObserver.observe(frame)
+      const sidebar = frame.firstElementChild
+      if (sidebar instanceof HTMLElement) this.#frameResizeObserver.observe(sidebar)
+    }
     // Live pager driving (3D flip + settle re-snap) rides the frame's own
     // scroll.
     frame.addEventListener('scroll', this.#onPagerScroll, { passive: true })
@@ -678,15 +708,22 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Live pager driver: PiUI's 3D flip vars follow the scroll, and once the
-   *  scroll settles the pager re-snaps to the nearest whole page (a
-   *  short-of-page stop is nudged). The state is deliberately NOT synced —
-   *  the sidebar stays expanded (always rendered), so a swipe merely parks
-   *  the pager; the sidebar column never re-renders. */
+   *  scroll settles the pager re-snaps to the nearest whole page. Scroll events
+   *  can arrive more than once per display frame, so the visual sync is coalesced
+   *  to one rAF while the settle timer still follows the latest input. */
   readonly #onPagerScroll = (): void => {
-    const frame = findFrame()
-    const mobile = this.#mql?.matches ?? false
-    if (frame === null || !mobile) return
-    this.#syncPager(frame)
+    if (this.#flipFrame === null) {
+      let waiting = true
+      const handle = requestAnimationFrame(() => {
+        waiting = false
+        this.#flipFrame = null
+        const frame = findFrame()
+        const mobile = this.#mql?.matches ?? false
+        if (frame === null || !mobile) return
+        this.#syncPager(frame)
+      })
+      if (waiting) this.#flipFrame = handle
+    }
     if (this.#settleTimer !== null) window.clearTimeout(this.#settleTimer)
     this.#settleTimer = window.setTimeout(() => {
       this.#settleTimer = null
@@ -712,11 +749,24 @@ export class MobileController implements MobileControllerHandle {
 
   /** Record every pointerdown (capture, passive) so the focus-in suppressor
    *  can distinguish the user's own tap on the composer from the app's
-   *  automatic focus. */
+   *  automatic focus. A pointer inside the pager also pre-warms the chat card's
+   *  temporary 3D layer before the first scroll event arrives. */
   readonly #onPointerDownCapture = (event: PointerEvent): void => {
     const target = event.target
     this.#lastPointerTarget = target instanceof Element ? target : null
     this.#lastPointerAt = Date.now()
+    const frame = findFrame()
+    if (this.#mql?.matches && frame !== null && target instanceof Element && frame.contains(target)) {
+      chatPageCard(frame)?.setAttribute('data-dshm-flipping', '')
+    }
+  }
+
+  /** Remove the pre-warmed layer after a plain tap. A real swipe keeps the
+   *  marker until the next scroll frame reaches the idle state. */
+  readonly #onPointerUpCapture = (): void => {
+    const frame = findFrame()
+    if (this.#flipState?.active === true || frame === null) return
+    chatPageCard(frame)?.removeAttribute('data-dshm-flipping')
   }
 
   /** During the post-pick window, bounce automatic focus out of the

@@ -39,8 +39,6 @@
      the viewport. */
   --dshm-sidebar-width: clamp(280px, 70vw, 360px);
   /* PiUI-style 3D flip of the chat card, driven by the controller on scroll. */
-  --dshm-flip-transform: none;
-  --dshm-flip-origin: 50% 50%;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -173,41 +171,20 @@
      so the user reading the conversation never sees a rounded border or
      shadow inside the screen, exactly like OpenCodeUI's full-width mobile
      chat. The inner layout is untouched; only the card chrome changes.
-     The 3D context (transform-style/backface-visibility/will-change) is
-     granted ONLY while a flip is live ([data-dshm-flipping] on <html>, set
-     by the controller while |progress| > 0): at rest the card must not pin
-     a 3D/compositing context — some mobile engines clip or fail to paint
-     sticky descendants mounted inside it (the approval "等待审批" and
-     question cards render in the sticky composer seat, inside this card,
-     and went invisible on phones), and a pinned 3D layer janks the
-     conversation column's scroll. During a flip the 3D layer is required
-     for the rotateY/scale to render properly. */
+      The card itself uses rotateY/scale during the gesture; descendants stay flattened.
+      No nested 3D context is needed. */
   [data-dsh-mobile] [data-dshm-frame] > :nth-child(2) {
     border: none;
     border-radius: 16px;
     overflow: hidden;
     background: var(--dsw-alias-bg-base);
     box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
-    transform: var(--dshm-flip-transform, none);
-    transform-origin: var(--dshm-flip-origin, 50% 50%);
-  }
-
-  /* Pager at rest (no flip live): the identity transform becomes `none`,
-     releasing the conversation column's 3D layer — at rest it is plain 2D
-     content again (scrolls composite on the cheap) and panels mounting in
-     the composer seat are never trapped in a preserve-3d context. */
-  [data-dsh-mobile]:not([data-dshm-flipping]) [data-dshm-frame] > :nth-child(2) {
     transform: none;
-    transform-style: flat;
-    backface-visibility: visible;
+    transform-origin: 50% 50%;
   }
 
-  /* The 3D layer (preserve-3d + hidden backface + will-change) is granted
-     only while a flip is actually live — the controller sets
-     [data-dshm-flipping] on <html> while |flip progress| > 0. */
-  [data-dsh-mobile][data-dshm-flipping] [data-dshm-frame] > :nth-child(2) {
-    transform-style: preserve-3d;
-    backface-visibility: hidden;
+  /* Keep the card itself on a compositor layer during the live gesture. */
+  [data-dsh-mobile] [data-dshm-frame] > :nth-child(2)[data-dshm-flipping] {
     will-change: transform;
   }
 

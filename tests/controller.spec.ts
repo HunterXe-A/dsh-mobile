@@ -164,29 +164,57 @@ describe('MobileController always-open sidebar + pager', () => {
 
     // A stale 72px cache would clamp progress to 1 and leave the chat card at
     // translateX(-48px). The expanded edge must produce the resting transform.
+    const chatCard = frame.children[1] as HTMLElement
+    expect(chatCard.style.getPropertyValue('transform')).toBe('')
+    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
     expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 
   it('applies one complete flip transform mid-swipe and clears it at rest', () => {
     stubMatchMedia(true)
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    })
     const frame = makeFrame()
     const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
     controller.mount()
 
     frame.scrollLeft = 150 // chatLeft 300, progress -0.5
     frame.dispatchEvent(new Event('scroll'))
-    expect(frame.style.getPropertyValue('--dshm-flip-transform'))
+    const chatCard = frame.children[1] as HTMLElement
+    expect(chatCard.style.getPropertyValue('transform'))
       .toBe('translate3d(0px, 0, 0) rotateY(-5deg) scale(0.97)')
-    expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('75% 50%')
-    expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(true)
+    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('75% 50%')
+    expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
+    expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
+    expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
 
     frame.scrollLeft = 300
     frame.dispatchEvent(new Event('scroll'))
+    expect(chatCard.style.getPropertyValue('transform')).toBe('')
+    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
     expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
+  })
+
+  it('pre-warms the chat card layer only for a pager interaction', () => {
+    stubMatchMedia(true)
+    const frame = makeFrame()
+    const controller = makeController({ toggleSidebar: toggleSidebarSpy() })
+    controller.mount()
+    const chatCard = frame.children[1] as HTMLElement
+
+    chatCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 
   it('state changes do NOT flip the pager (the page is user-driven)', async () => {
