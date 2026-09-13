@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** MobileController: always-open sidebar + pager flip/settle, chrome, keyboard inset, teardown. */
+/** MobileController: always-open sidebar + pager pan/settle, veil chrome, teardown. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileController, PAGE_ATTR, type MobileControllerOptions } from '../src/client/controller.ts'
 

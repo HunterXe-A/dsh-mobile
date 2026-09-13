@@ -58,7 +58,7 @@ export default [
     dts: true,
     clean: true,
     deps: {
-      neverBundle: ['schemastery', 'cordis'],
+      neverBundle: ['cordis'],
     },
   },
   {

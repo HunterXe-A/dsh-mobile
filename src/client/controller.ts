@@ -2,7 +2,7 @@
  * DOM-side mobile controller: the non-React half of the plugin. Owns the
  * pieces the frame itself cannot express — the viewport meta upgrade, the
  * safe-area CSS variables, and the pager's live state (page mirror,
- * 3D pager state, click-to-return). Everything it installs is removed by
+ * pan chrome, click-to-return). Everything it installs is removed by
  * dispose(), and every rule it depends on is scoped under the
  * [data-dsh-mobile] attribute it sets on <html>.
  *
@@ -191,14 +191,6 @@ function chatPageCard(frame: HTMLElement): HTMLElement | null {
   return card instanceof HTMLElement ? card : null
 }
 
-/** Legacy custom properties left by pre-refactor package versions. */
-const LEGACY_FLIP_PROPERTIES = [
-  '--dshm-rotate',
-  '--dshm-scale',
-  '--dshm-offset-x',
-  '--dshm-origin-x',
-] as const
-
 /** Callbacks the controller needs from the apply world. */
 export interface MobileControllerOptions {
   /** Toggle the sidebar panel (frame-owned layout action). */
@@ -267,7 +259,6 @@ export class MobileController implements MobileControllerHandle {
   #disposed = false
   #conversationObserver: MutationObserver | null = null
   #conversationTarget: Element | null = null
-  #lastActivityAt = 0
   /** Original parent of the mode button before relocation, used to restore
    *  on dispose. When null the button has not been relocated. */
   #modeButtonHome: Element | null = null
@@ -283,7 +274,6 @@ export class MobileController implements MobileControllerHandle {
   /** @param options - apply-world callbacks. */
   constructor(options: MobileControllerOptions) {
     this.#options = options
-
   }
 
   /** True while the frame shows the sidebar expanded (not the rail). */
@@ -574,14 +564,6 @@ export class MobileController implements MobileControllerHandle {
   /** Remove all flip styles, including values from older plugin versions. */
   readonly #clearFlipStyles = (frame: HTMLElement | null): void => {
     const card = frame === null ? null : chatPageCard(frame)
-    for (const property of LEGACY_FLIP_PROPERTIES) {
-      frame?.style.removeProperty(property)
-      card?.style.removeProperty(property)
-    }
-    frame?.style.removeProperty('--dshm-flip-transform')
-    frame?.style.removeProperty('--dshm-flip-origin')
-    card?.style.removeProperty('--dshm-flip-transform')
-    card?.style.removeProperty('--dshm-flip-origin')
     card?.style.removeProperty('transform')
     card?.style.removeProperty('transform-origin')
     card?.style.removeProperty('border-radius')
@@ -590,8 +572,7 @@ export class MobileController implements MobileControllerHandle {
     this.#veilOpacity = null
     // The card's flipping marker is the warm-layer grant: it lives for the
     // whole mobile session (bind → dispose / breakpoint leave) and is NOT
-    // removed here — only the html-level legacy attr is.
-    this.#html?.removeAttribute('data-dshm-flipping')
+    // removed here.
     this.#flipState = null
   }
 
@@ -683,8 +664,8 @@ export class MobileController implements MobileControllerHandle {
       const card = chatPageCard(frame)
       card?.setAttribute('data-dshm-flipping', '')
     }
-    // A stale inline transform-origin from an older fallback session would
-    // break the keyframe geometry (animations do not touch transform-origin).
+    // A stale inline transform-origin from an older session would offset
+    // the card; clearing keeps the resting chrome exact.
     this.#clearFlipStyles(frame)
     this.#frameObserver = new MutationObserver(this.#onFrameCollapseChange)
     this.#frameObserver.observe(frame, {
@@ -1046,10 +1027,8 @@ export class MobileController implements MobileControllerHandle {
     this.#conversationObserver?.disconnect()
     this.#conversationTarget = target
     this.#conversationObserver = new MutationObserver(() => {
-      this.#lastActivityAt = Date.now()
       this.#requestTaskStatusSync()
     })
-    this.#lastActivityAt = Date.now()
     this.#conversationObserver.observe(target, {
       childList: true,
       subtree: true,

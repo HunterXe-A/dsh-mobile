@@ -28,9 +28,9 @@
   /* Safe-area insets (notched phones, standalone PWA). env() resolves to
      0px in browsers without the concept, so desktop is unaffected. */
   --dshm-safe-top: env(safe-area-inset-top, 0px);
-  --dshm-safe-right: env(safe-area-inset-right, 0px);
+
   --dshm-safe-bottom: env(safe-area-inset-bottom, 0px);
-  --dshm-safe-left: env(safe-area-inset-left, 0px);
+
   /* Sidebar page width (phones): at least the sidebar's own 280px content
      width (so it is never clipped), at most 360px, with ~70vw — the chat
      card then shows only a sliver on the right (PiUI's overlayWidth idea,
@@ -719,7 +719,6 @@
     overflow-y: hidden;
     padding-bottom: 4px;
     scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
   }
 
   [data-dsh-mobile] [role='dialog'] > nav > div:nth-child(2)::-webkit-scrollbar {

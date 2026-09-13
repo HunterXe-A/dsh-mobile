@@ -6,7 +6,7 @@
  * the option list compete for the same fixed card height — a long question
  * pushes the options and the custom-answer input below the fold on phones.
  * The mobile sheet caps the title (and the optional MarkdownText detail
- * div) in their own self-scrolling windows with a bottom fade, and lets
+ * div) in their own self-scrolling windows, and lets
  * the option group absorb the remaining body height, keeping answers in
  * view and the input row near the bottom. Selectors key off the stable
  * seats only — [data-question-scroll], its :has() parent section, the
