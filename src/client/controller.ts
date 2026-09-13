@@ -74,6 +74,10 @@ const VIEWPORT_CONTENT =
  * 标记的 data-dshm-frame 来定位。
  */
 const FRAME_MARKER = 'data-dshm-frame'
+/** Inherited custom property driving the shadow veil's opacity. The veil is
+ *  a frame pseudo-element (no inline styles possible), so the stepped value
+ *  is written here once per step. */
+const VEIL_OPACITY_PROPERTY = '--dshm-veil-opacity'
 const FIND_FRAME_SELECTOR = `[${FRAME_MARKER}], [data-rightbar-collapsed], [data-sidebar-collapsed]`
 
 /** The AppFrame element, or null before the layout entry mounts it. */
@@ -199,17 +203,6 @@ const LEGACY_FLIP_PROPERTIES = [
 export interface MobileControllerOptions {
   /** Toggle the sidebar panel (frame-owned layout action). */
   toggleSidebar: () => void
-  /** Force scroll-driven flip animations on/off (tests). Undefined = detect. */
-  scrollAnimations?: boolean
-}
-
-/** Feature-detect scroll-driven animations (Chrome/WebView 115+, Safari 26+).
- *  The flip rides the frame's own scroll timeline on the compositor — in
- *  lockstep with native scrolling, immune to main-thread latency. */
-const supportsScrollAnimations = (): boolean => {
-  return typeof CSS !== 'undefined'
-    && typeof CSS.supports === 'function'
-    && CSS.supports('animation-timeline', 'scroll(nearest inline)')
 }
 
 /** Test-facing surface of the controller (the class keeps everything else private). */
@@ -229,8 +222,6 @@ interface MobileControllerHandle {
 /** The DOM-side controller (see module doc). */
 export class MobileController implements MobileControllerHandle {
   readonly #options: MobileControllerOptions
-  /** Whether the flip is delegated to scroll-driven CSS animations. */
-  readonly #scrollAnimations: boolean
   #html: HTMLElement | null = null
   #mql: MediaQueryList | null = null
   #frameObserver: MutationObserver | null = null
@@ -283,13 +274,16 @@ export class MobileController implements MobileControllerHandle {
   #modeRelocateFrame: number | null = null
   /** Last applied visual state of the chat-page flip. */
   #flipState: PagerFlipState | null = null
+  /** Last veil opacity written to the frame. Compared as strings so only a
+   *  real step change touches the DOM. */
+  #veilOpacity: string | null = null
   /** Cached chat-page left edge. Invalidated on width and collapse changes. */
   #cachedChatLeft = -1
 
   /** @param options - apply-world callbacks. */
   constructor(options: MobileControllerOptions) {
     this.#options = options
-    this.#scrollAnimations = options.scrollAnimations ?? supportsScrollAnimations()
+
   }
 
   /** True while the frame shows the sidebar expanded (not the rail). */
@@ -512,7 +506,6 @@ export class MobileController implements MobileControllerHandle {
       frame.removeAttribute(FRAME_MARKER)
       const card = chatPageCard(frame)
       card?.removeAttribute('data-dshm-flipping')
-      card?.removeAttribute('data-dshm-scrollanim')
     }
     if (this.#viewportMeta !== null) {
       if (this.#viewportOriginal !== null) this.#viewportMeta.content = this.#viewportOriginal
@@ -593,6 +586,8 @@ export class MobileController implements MobileControllerHandle {
     card?.style.removeProperty('transform-origin')
     card?.style.removeProperty('border-radius')
     card?.style.removeProperty('box-shadow')
+    frame?.style.removeProperty(VEIL_OPACITY_PROPERTY)
+    this.#veilOpacity = null
     // The card's flipping marker is the warm-layer grant: it lives for the
     // whole mobile session (bind → dispose / breakpoint leave) and is NOT
     // removed here — only the html-level legacy attr is.
@@ -600,11 +595,11 @@ export class MobileController implements MobileControllerHandle {
     this.#flipState = null
   }
 
-  /** Apply a flip state only when its visual output changed. */
+  /** Apply a flip state only when its visual output changed. The veil
+   *  opacity rides one inherited custom property per step; everything else
+   *  written here is constant, so a gesture costs a handful of cheap
+   *  recalcs and zero repaints. */
   readonly #syncFlip = (frame: HTMLElement, chatLeft: number): void => {
-    // Scroll-driven animations drive the flip on the compositor in lockstep
-    // with the scroll; inline styles here would only fight them.
-    if (this.#scrollAnimations) return
     const next = calculatePagerFlip(frame.scrollLeft, chatLeft)
     if (samePagerFlip(this.#flipState, next)) return
 
@@ -612,10 +607,18 @@ export class MobileController implements MobileControllerHandle {
     if (next.active && card !== null) {
       card.style.setProperty('transform', next.transform)
       card.style.setProperty('transform-origin', next.origin)
-      // Chrome invalidates paint (transform does not): only rewrite it when
-      // the quantized value actually stepped.
+      // Card chrome is constant in pan mode (square, shadowless — the veil
+      // carries the shadow), so these guards never fire past the first
+      // frame; they stay as cheap insurance.
       if (this.#flipState?.radius !== next.radius) card.style.setProperty('border-radius', next.radius)
       if (this.#flipState?.shadow !== next.shadow) card.style.setProperty('box-shadow', next.shadow)
+      // The veil is a pseudo-element: fade it through the inherited custom
+      // property (recalc only, composited opacity — no repaint).
+      const veil = String(next.veil)
+      if (this.#veilOpacity !== veil) {
+        this.#veilOpacity = veil
+        frame.style.setProperty(VEIL_OPACITY_PROPERTY, veil)
+      }
       this.#flipState = next
       return
     }
@@ -679,7 +682,6 @@ export class MobileController implements MobileControllerHandle {
     if (this.#mql?.matches ?? false) {
       const card = chatPageCard(frame)
       card?.setAttribute('data-dshm-flipping', '')
-      if (this.#scrollAnimations) card?.setAttribute('data-dshm-scrollanim', '')
     }
     // A stale inline transform-origin from an older fallback session would
     // break the keyframe geometry (animations do not touch transform-origin).
@@ -695,7 +697,7 @@ export class MobileController implements MobileControllerHandle {
       const sidebar = frame.firstElementChild
       if (sidebar instanceof HTMLElement) this.#frameResizeObserver.observe(sidebar)
     }
-    // Live pager driving (3D flip + settle re-snap) rides the frame's own
+    // Live pager driving (pan chrome + settle re-snap) rides the frame's own
     // scroll.
     frame.addEventListener('scroll', this.#onPagerScroll, { passive: true })
     // A frame that appears after mount (the layout entry loads later) still
@@ -706,8 +708,8 @@ export class MobileController implements MobileControllerHandle {
   }
 
   /** Crossing the breakpoint: entering mobile re-expands the sidebar and
-   *  places the pager on the chat page; leaving clears the 3D flip vars so
-   *  the desktop layout renders flat. */
+   *  places the pager on the chat page; leaving clears the pan chrome vars
+   *  so the desktop layout renders flat. */
   readonly #onBreakpointChange = (): void => {
     const mobile = this.#mql?.matches ?? false
     const frame = findFrame()
@@ -715,12 +717,10 @@ export class MobileController implements MobileControllerHandle {
     if (!mobile) {
       this.#clearFlipStyles(frame)
       card?.removeAttribute('data-dshm-flipping')
-      card?.removeAttribute('data-dshm-scrollanim')
       this.#html?.removeAttribute(PAGE_ATTR)
       return
     }
     card?.setAttribute('data-dshm-flipping', '')
-    if (this.#scrollAnimations) card?.setAttribute('data-dshm-scrollanim', '')
     this.#cachedChatLeft = -1
     this.#ensureSidebarOpen()
     this.#placeOnChat('auto')
@@ -758,7 +758,7 @@ export class MobileController implements MobileControllerHandle {
     }, 120)
   }
 
-  /** Live pager driver: PiUI's 3D flip vars follow the scroll, and once the
+  /** Live pager driver: the pan chrome follows the scroll, and once the
    *  scroll settles the pager re-snaps to the nearest whole page. Scroll events
    *  can arrive more than once per display frame, so the visual sync is coalesced
    *  to one rAF while the settle timer still follows the latest input. */

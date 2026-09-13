@@ -38,7 +38,7 @@
      (560-768px) override this token below so the page grows toward half
      the viewport. */
   --dshm-sidebar-width: clamp(280px, 70vw, 360px);
-  /* PiUI-style 3D flip of the chat card, driven by the controller on scroll. */
+  /* PiUI-style pager slide of the chat card, driven by the controller on scroll. */
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -164,24 +164,25 @@
   /* Chat page: the PiUI rounded card — rounded and shadowed, clipped to the
      radius, no border so no divider line sits between it and the sidebar.
      The conversation renders completely untouched inside.
-     The radius/shadow are a SIDEBAR-page affordance: while the chat card is
+     The veil shadow is a SIDEBAR-page affordance: while the chat card is
      exposed as a sliver beside the sidebar it reads as a distinct card. On
      the CHAT page (data-dshm-page=chat on <html>, kept by the controller)
      the card goes full-bleed — square corners, no shadow, edge to edge —
      so the user reading the conversation never sees a rounded border or
      shadow inside the screen, exactly like OpenCodeUI's full-width mobile
      chat. The inner layout is untouched; only the card chrome changes.
-      The card itself uses rotateY/scale during the gesture; descendants stay flattened.
-      No nested 3D context is needed. On engines with scroll-driven animations
-      the whole flip (transform + chrome) rides the frame's scroll timeline on
-      the compositor; otherwise the controller interpolates it inline with the
-      swipe progress — these declarations are the resting / fallback base. */
+      The card itself carries no transform during the gesture; the pager pans
+      natively and only the veil opacity follows the swipe, written by the
+      controller once per step (see the veil rule below) — these declarations
+      are the resting base. */
   [data-dsh-mobile] [data-dshm-frame] > :nth-child(2) {
     border: none;
-    border-radius: 16px;
+    border-radius: 0;
     overflow: hidden;
     background: var(--dsw-alias-bg-base);
-    box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
+    /* No shadow here: it lives on the veil layer below, so the card itself
+       never repaints for chrome. */
+    box-shadow: none;
     transform: none;
     transform-origin: 50% 50%;
   }
@@ -193,69 +194,37 @@
     will-change: transform;
   }
 
-  /* Scroll-driven flip (Chrome/WebView 115+, Safari 26+; the controller sets
-     data-dshm-scrollanim only after a feature detect): the flip rides the
-     frame's own scroll timeline on the compositor — in lockstep with native
-     scrolling, immune to main-thread latency, so fast swipes never segment.
-     The frame has exactly two pages, so its scroll range [0, chatLeft] maps
-     1:1 onto the flip progress. transform runs composited; the chrome is a
-     second animation whose keyframes carry the same 1/4-reveal staircase the
-     JS fallback writes, so it repaints at most 4 times. The card pivots from
-     a fixed 50% origin — the translate3d(±50%) bookends fold the moving
-     transform-origin into the transform itself. */
-  @keyframes dshm-flip {
-    from {
-      transform: translate3d(50%, 0, 0) rotateY(-10deg) scale(0.94) translate3d(-50%, 0, 0);
-    }
-    to {
-      transform: translate3d(0%, 0, 0) rotateY(0deg) scale(1) translate3d(0%, 0, 0);
-    }
-  }
+  /* Shadow veil: a static transparent layer carrying the fixed full-strength
+     shadow. Its opacity rides one inherited custom property
+     (--dshm-veil-opacity), written by the controller once per step and
+     coalesced to one rAF per frame. No animation runs on the veil on any
+     engine, so it never earns its own compositor layer: it paints once into
+     the scroller and only repaints its own shadow area on step changes. The
+     frame has exactly two pages, so its scroll range [0, chatLeft] maps 1:1
+     onto the swipe progress. The card itself is never transformed and never
+     shadowed: the pager pans natively and only the veil fades. */
 
-  /* Chrome staircase — the five quantized states the JS fallback writes
-     (stepped = round(reveal * 4) / 4, transitions at odd eighths of the
-     timeline). Explicit keyframes because steps(4, jump-none) only yields two
-     jumps at t=1/3 and 2/3: the chrome would then pop in mid-swipe instead of
-     appearing faintly right after the chat rest and building in three even
-     steps. Each segment's steps(1, end) holds its state until the next
-     keyframe, so the chrome still repaints at most 4 times per swipe. */
-  @keyframes dshm-flip-chrome {
-    0% {
-      border-radius: 16px;
-      box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
-      animation-timing-function: steps(1, end);
-    }
-    12.5% {
-      border-radius: 12px;
-      box-shadow: 0 4.5px 21px color-mix(in srgb, var(--dsw-static-neutral-1000) 12%, transparent);
-      animation-timing-function: steps(1, end);
-    }
-    37.5% {
-      border-radius: 8px;
-      box-shadow: 0 3px 14px color-mix(in srgb, var(--dsw-static-neutral-1000) 8%, transparent);
-      animation-timing-function: steps(1, end);
-    }
-    62.5% {
-      border-radius: 4px;
-      box-shadow: 0 1.5px 7px color-mix(in srgb, var(--dsw-static-neutral-1000) 4%, transparent);
-      animation-timing-function: steps(1, end);
-    }
-    87.5% {
-      border-radius: 0px;
-      box-shadow: 0 0 0 color-mix(in srgb, var(--dsw-static-neutral-1000) 0%, transparent);
-    }
-    100% {
-      border-radius: 0px;
-      box-shadow: 0 0 0 color-mix(in srgb, var(--dsw-static-neutral-1000) 0%, transparent);
-    }
-  }
+  /* Veil opacity staircase — eight quantized states (1/8-reveal steps): the
+     first shadow lands at 1/16 of the swipe at 1/8 strength, so it reads as
+     a smooth fade-in instead of popping after a fixed distance. The shadow
+     raster itself is fixed: only the compositable opacity changes. */
 
-  [data-dsh-mobile] [data-dshm-frame] > :nth-child(2)[data-dshm-flipping][data-dshm-scrollanim] {
-    animation: dshm-flip linear both, dshm-flip-chrome linear both;
-    /* Declared after the shorthand: `animation` resets animation-timeline.
-       The chrome's quantization lives in its keyframes (per-segment
-       steps(1, end)), not in the animation timing. */
-    animation-timeline: scroll(nearest inline), scroll(nearest inline);
+  /* 阴影罩：frame 的 ::after。必须是 absolute——in-flow 的显式占格会把自动
+     排布的卡片挤进 0 宽轨道（白屏事故）。absolute 不参与自动排布，几何与
+     卡片格完全重合（卡片盒本身加约 34px 阴影外溢，和卡片自带阴影原来产生
+     的一致，无多余面积），随内容一起滚动；中间透明，只在卡片之外投阴影，
+     盖在上层也不挡内容。frame 在 stock 样式里本就是 relative，不用动它。 */
+  [data-dsh-mobile] [data-dshm-frame]::after {
+    content: "";
+    position: absolute;
+    left: var(--dshm-sidebar-width);
+    width: 100%;
+    top: 0;
+    bottom: 0;
+    border-radius: 0;
+    box-shadow: 0 6px 28px color-mix(in srgb, var(--dsw-static-neutral-1000) 16%, transparent);
+    opacity: var(--dshm-veil-opacity, 0);
+    pointer-events: none;
   }
 
   /* Chat page at rest (inline chrome cleared): full-bleed, no card chrome —

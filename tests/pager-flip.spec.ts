@@ -7,43 +7,51 @@ describe('pager flip math', () => {
     expect(calculatePagerFlip(0, 0)).toBe(IDLE_FLIP_STATE)
     expect(IDLE_FLIP_STATE.radius).toBe('0px')
     expect(IDLE_FLIP_STATE.shadow).toBe('none')
+    expect(IDLE_FLIP_STATE.veil).toBe(0)
   })
 
-  it('keeps the sidebar-side transform centered horizontally', () => {
+  it('leaves the card untransformed and square in pan mode', () => {
     expect(calculatePagerFlip(150, 300)).toEqual({
       active: true,
-      transform: 'translate3d(0px, 0, 0) rotateY(-5deg) scale(0.97)',
-      origin: '75% 50%',
-      radius: '8.00px',
-      shadow: '0 3.00px 14.00px color-mix(in srgb, var(--dsw-static-neutral-1000) 8.00%, transparent)',
+      transform: 'none',
+      origin: '50% 50%',
+      radius: '0px',
+      shadow: 'none',
+      veil: 0.5,
     })
   })
 
-  it('clamps overscroll before calculating the horizontal retreat', () => {
+  it('clamps overscroll and keeps the chat page full-bleed', () => {
     expect(calculatePagerFlip(900, 300)).toEqual({
       active: true,
-      transform: 'translate3d(-48px, 0, 0) rotateY(10deg) scale(0.94)',
-      origin: '0% 50%',
-      radius: '0.00px',
-      shadow: '0 0.00px 0.00px color-mix(in srgb, var(--dsw-static-neutral-1000) 0.00%, transparent)',
+      transform: 'none',
+      origin: '50% 50%',
+      radius: '0px',
+      shadow: 'none',
+      veil: 0,
     })
   })
 
-  it('grows the card chrome with the sidebar-side progress only', () => {
+  it('grows the veil opacity with the sidebar-side progress only', () => {
     const half = calculatePagerFlip(150, 300)
     const full = calculatePagerFlip(0, 300)
     const overscroll = calculatePagerFlip(450, 300)
-    expect(parseFloat(full.radius)).toBeGreaterThan(parseFloat(half.radius))
-    expect(full.shadow).toContain('16.00%')
+    // The card itself stays square and shadowless; only the veil fades in.
+    expect(half.radius).toBe('0px')
+    expect(half.shadow).toBe('none')
+    expect(half.veil).toBe(0.5)
+    expect(full.veil).toBe(1)
     // The guarded overscroll side keeps the chat page full-bleed.
-    expect(overscroll.radius).toBe('0.00px')
-    expect(overscroll.shadow).toContain('0.00%')
+    expect(overscroll.radius).toBe('0px')
+    expect(overscroll.shadow).toBe('none')
+    expect(overscroll.veil).toBe(0)
   })
 
-  it('quantizes the chrome to 1/4-reveal steps to limit paint', () => {
-    // reveal 0.1 rounds to the 0 step (full-bleed); 0.3 rounds to 1/4 (4px).
-    expect(calculatePagerFlip(270, 300).radius).toBe('0.00px')
-    expect(calculatePagerFlip(210, 300).radius).toBe('4.00px')
+  it('quantizes the veil opacity to 1/8-reveal steps', () => {
+    // reveal 0.05 rounds to the 0 step; 0.1 rounds to 1/8; 0.3 rounds to 1/4.
+    expect(calculatePagerFlip(285, 300).veil).toBe(0)
+    expect(calculatePagerFlip(270, 300).veil).toBe(0.125)
+    expect(calculatePagerFlip(210, 300).veil).toBe(0.25)
   })
 
   it('compares only rendered values', () => {
@@ -51,6 +59,6 @@ describe('pager flip math', () => {
     expect(samePagerFlip(null, state)).toBe(false)
     expect(samePagerFlip(state, { ...state })).toBe(true)
     expect(samePagerFlip(state, IDLE_FLIP_STATE)).toBe(false)
-    expect(samePagerFlip(state, { ...state, radius: '0.00px' })).toBe(false)
+    expect(samePagerFlip(state, { ...state, radius: '1px' })).toBe(false)
   })
 })

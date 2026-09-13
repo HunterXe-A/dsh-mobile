@@ -1,29 +1,36 @@
-/** Pure pager flip math. DOM synchronization stays in MobileController. */
+/** Pure pager slide math. DOM synchronization stays in MobileController. */
 
 export interface PagerFlipState {
-  /** Whether the card needs the temporary 3D layer. */
+  /** Whether the pager is off its rest page (drives the warm layer + chrome). */
   active: boolean
-  /** Complete transform for the chat card. `none` means the pager is resting. */
+  /** Card transform. Always `none`: pan mode slides the pager natively and
+   *  never transforms the card. */
   transform: string
-  /** Complete transform origin for the chat card. */
+  /** Transform origin. Constant: nothing rotates, so nothing pivots. */
   origin: string
-  /** Card chrome interpolated with the sidebar-side progress: the rounded
-   *  "distinct card" look follows the gesture continuously instead of popping
-   *  at the page-mirror midpoint. Zero/none values keep the card full-bleed. */
+  /** Card corner radius. Always zero: rounded corners were removed to cut
+   *  paint cost (see below). */
   radius: string
+  /** Card shadow. Always `none`: the shadow lives on the veil layer (a
+   *  frame pseudo-element with a fixed shadow whose opacity follows the
+   *  gesture), so the card itself never repaints for chrome. */
   shadow: string
+  /** Shadow-veil opacity, stepped with the sidebar-side progress: 0 at the
+   *  chat rest, 1 at the sidebar rest. Written as an inherited custom
+   *  property (pseudo-elements take no inline styles). */
+  veil: number
 }
 
-/** Full card chrome at the sidebar-page rest (the exposed-sliver look). */
-const CARD_RADIUS_PX = 16
-const SHADOW_OFFSET_PX = 6
-const SHADOW_BLUR_PX = 28
-const SHADOW_ALPHA_PCT = 16
+/* The veil's static box-shadow in mobile.css is the full-strength look
+ *  (0 6px 28px at 16%); `veil` below only fades that fixed raster in. */
 
-/** Chrome quantization steps: border-radius/box-shadow invalidate PAINT
- *  (transform does not), so the chrome is written in 1/4-reveal steps —
- *  at most 4 shadow repaints per swipe, still continuous to the eye. */
-const CHROME_STEPS = 4
+/** Veil-opacity quantization steps: the fallback writes the inherited custom
+ *  property in 1/8-reveal steps (cheap recalc, composited opacity — no
+ *  repaint). Eight steps read as a smooth fade-in (the first shadow lands
+ *  at 1/16 of the swipe at 1/8 strength); four left a visible pop after a
+ *  fixed distance. The veil rule consumes these steps through the inherited
+ *  custom property. */
+const VEIL_STEPS = 8
 
 export const IDLE_FLIP_STATE: PagerFlipState = Object.freeze({
   active: false,
@@ -31,6 +38,7 @@ export const IDLE_FLIP_STATE: PagerFlipState = Object.freeze({
   origin: '50% 50%',
   radius: '0px',
   shadow: 'none',
+  veil: 0,
 })
 
 /**
@@ -38,7 +46,7 @@ export const IDLE_FLIP_STATE: PagerFlipState = Object.freeze({
  *
  * `scrollLeft === chatLeft` is the chat-page rest position. Negative progress
  * exposes the sidebar; positive progress is the guarded overscroll side that
- * receives the horizontal offset.
+ * stays full-bleed.
  */
 export function calculatePagerFlip(scrollLeft: number, chatLeft: number): PagerFlipState {
   if (chatLeft <= 0) return IDLE_FLIP_STATE
@@ -46,23 +54,21 @@ export function calculatePagerFlip(scrollLeft: number, chatLeft: number): PagerF
   const progress = Math.max(-1, Math.min(1, (scrollLeft - chatLeft) / chatLeft))
   if (progress === 0) return IDLE_FLIP_STATE
 
-  const absolute = Math.abs(progress)
-  const offsetX = Math.max(0, progress) ** 2 * -48
-  const rotate = progress * 10
-  const scale = 1 - absolute * 0.06
-  const originX = 50 - progress * 50
-  // Chrome follows the SIDEBAR side only: the exposed-sliver look grows with
-  // how far the pager moved toward the sidebar and stays full-bleed on the
-  // guarded overscroll side (the chat page pulled past its edge). The reveal
-  // is quantized so the paint-heavy chrome only re-renders in steps.
+  // Pan mode: the pager slides natively — no offset, rotation, or scale on
+  // the card, no radius, no card shadow. Only the veil opacity follows the
+  // SIDEBAR side: 0 at the chat rest, full at the sidebar rest, full-bleed
+  // (0) on the guarded overscroll side (the chat page pulled past its edge).
+  // The reveal is quantized so the fallback writes the inherited custom
+  // property in steps.
   const reveal = Math.max(0, -progress)
-  const stepped = Math.round(reveal * CHROME_STEPS) / CHROME_STEPS
+  const stepped = Math.round(reveal * VEIL_STEPS) / VEIL_STEPS
   return {
     active: true,
-    transform: `translate3d(${offsetX}px, 0, 0) rotateY(${rotate}deg) scale(${scale})`,
-    origin: `${originX}% 50%`,
-    radius: `${(CARD_RADIUS_PX * stepped).toFixed(2)}px`,
-    shadow: `0 ${(SHADOW_OFFSET_PX * stepped).toFixed(2)}px ${(SHADOW_BLUR_PX * stepped).toFixed(2)}px color-mix(in srgb, var(--dsw-static-neutral-1000) ${(SHADOW_ALPHA_PCT * stepped).toFixed(2)}%, transparent)`,
+    transform: 'none',
+    origin: '50% 50%',
+    radius: '0px',
+    shadow: 'none',
+    veil: stepped,
   }
 }
 
@@ -74,4 +80,5 @@ export function samePagerFlip(a: PagerFlipState | null, b: PagerFlipState): bool
     && a.origin === b.origin
     && a.radius === b.radius
     && a.shadow === b.shadow
+    && a.veil === b.veil
 }

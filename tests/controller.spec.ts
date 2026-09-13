@@ -64,9 +64,7 @@ function toggleSidebarSpy() { return vi.fn() }
 /** Track every mounted controller so afterEach can dispose it. */
 const liveControllers: MobileController[] = []
 function makeController(options: MobileControllerOptions): MobileController {
-  // Default to the JS fallback so tests are deterministic regardless of the
-  // engine's CSS.supports; the scroll-driven mode has its own test below.
-  const controller = new MobileController({ scrollAnimations: false, ...options })
+  const controller = new MobileController({ ...options })
   liveControllers.push(controller)
   return controller
 }
@@ -164,8 +162,8 @@ describe('MobileController always-open sidebar + pager', () => {
     frame.scrollLeft = 300
     frame.dispatchEvent(new Event('scroll'))
 
-    // A stale 72px cache would clamp progress to 1 and leave the chat card at
-    // translateX(-48px). The expanded edge must produce the resting transform.
+    // A stale 72px cache would clamp progress to 1 and leave the chat card
+    // transformed. The expanded edge must produce the resting transform.
     const chatCard = frame.children[1] as HTMLElement
     expect(chatCard.style.getPropertyValue('transform')).toBe('')
     expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
@@ -176,7 +174,7 @@ describe('MobileController always-open sidebar + pager', () => {
     expect(document.documentElement.hasAttribute('data-dshm-flipping')).toBe(false)
   })
 
-  it('applies one complete flip transform mid-swipe and clears it at rest', () => {
+  it('applies pan chrome mid-swipe and clears it at rest', () => {
     stubMatchMedia(true)
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
       cb(0)
@@ -189,13 +187,15 @@ describe('MobileController always-open sidebar + pager', () => {
     frame.scrollLeft = 150 // chatLeft 300, progress -0.5
     frame.dispatchEvent(new Event('scroll'))
     const chatCard = frame.children[1] as HTMLElement
-    expect(chatCard.style.getPropertyValue('transform'))
-      .toBe('translate3d(0px, 0, 0) rotateY(-5deg) scale(0.97)')
-    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('75% 50%')
-    // Chrome follows the gesture continuously: half-reveal at the midpoint.
-    expect(chatCard.style.getPropertyValue('border-radius')).toBe('8.00px')
-    expect(chatCard.style.getPropertyValue('box-shadow'))
-      .toBe('0 3.00px 14.00px color-mix(in srgb, var(--dsw-static-neutral-1000) 8.00%, transparent)')
+    // Pan mode writes no transform — the pager slides natively.
+    expect(chatCard.style.getPropertyValue('transform')).toBe('none')
+    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('50% 50%')
+    // The card itself stays square and shadowless mid-gesture; the shadow
+    // lives on the veil, whose opacity rides the inherited custom property
+    // in steps (half-reveal at the midpoint).
+    expect(chatCard.style.getPropertyValue('border-radius')).toBe('')
+    expect(chatCard.style.getPropertyValue('box-shadow')).toBe('')
+    expect(frame.style.getPropertyValue('--dshm-veil-opacity')).toBe('0.5')
     expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
     expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
@@ -207,6 +207,7 @@ describe('MobileController always-open sidebar + pager', () => {
     expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
     expect(chatCard.style.getPropertyValue('border-radius')).toBe('')
     expect(chatCard.style.getPropertyValue('box-shadow')).toBe('')
+    expect(frame.style.getPropertyValue('--dshm-veil-opacity')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-transform')).toBe('')
     expect(frame.style.getPropertyValue('--dshm-flip-origin')).toBe('')
     // The transform clears, but the warm layer stays granted for the session.
@@ -225,19 +226,17 @@ describe('MobileController always-open sidebar + pager', () => {
     controller.mount()
     const chatCard = frame.children[1] as HTMLElement
 
-    frame.scrollLeft = 150 // chatLeft 300, reveal 0.5 → chrome step 2/4
+    frame.scrollLeft = 150 // chatLeft 300, reveal 0.5 → shadow step 4/8
     frame.dispatchEvent(new Event('scroll'))
-    expect(chatCard.style.getPropertyValue('border-radius')).toBe('8.00px')
+    expect(chatCard.style.getPropertyValue('border-radius')).toBe('')
 
-    // Same chrome step, new transform frame: radius/shadow are not rewritten
-    // (the sentinels survive), while the transform still updates per frame.
+    // Same chrome step, new scroll frame: radius/shadow are not rewritten
+    // (the sentinels survive). Pan mode writes no transform either.
     chatCard.style.setProperty('border-radius', 'sentinel')
     chatCard.style.setProperty('box-shadow', 'sentinel')
-    frame.scrollLeft = 140 // reveal 0.533 → the same 2/4 step
+    frame.scrollLeft = 140 // reveal 0.533 → the same 4/8 step
     frame.dispatchEvent(new Event('scroll'))
-    expect(chatCard.style.getPropertyValue('transform')).not.toBe('')
-    expect(chatCard.style.getPropertyValue('transform'))
-      .not.toBe('translate3d(0px, 0, 0) rotateY(-5deg) scale(0.97)')
+    expect(chatCard.style.getPropertyValue('transform')).toBe('none')
     expect(chatCard.style.getPropertyValue('border-radius')).toBe('sentinel')
     expect(chatCard.style.getPropertyValue('box-shadow')).toBe('sentinel')
   })
@@ -265,31 +264,6 @@ describe('MobileController always-open sidebar + pager', () => {
     frame.scrollLeft = 300
     frame.dispatchEvent(new Event('scroll'))
     expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
-  })
-
-  it('hands the flip to scroll-driven animations when supported', () => {
-    stubMatchMedia(true)
-    const frame = makeFrame()
-    const controller = makeController({ toggleSidebar: toggleSidebarSpy(), scrollAnimations: true })
-    controller.mount()
-    const chatCard = frame.children[1] as HTMLElement
-
-    // The animation marker rides the warm-layer grant at bind time.
-    expect(chatCard.hasAttribute('data-dshm-flipping')).toBe(true)
-    expect(chatCard.hasAttribute('data-dshm-scrollanim')).toBe(true)
-
-    // The compositor drives the flip in lockstep with the scroll: no inline
-    // styles are written per frame, so fast swipes never segment.
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-      cb(0)
-      return 0
-    })
-    frame.scrollLeft = 150
-    frame.dispatchEvent(new Event('scroll'))
-    expect(chatCard.style.getPropertyValue('transform')).toBe('')
-    expect(chatCard.style.getPropertyValue('transform-origin')).toBe('')
-    expect(chatCard.style.getPropertyValue('border-radius')).toBe('')
-    expect(chatCard.style.getPropertyValue('box-shadow')).toBe('')
   })
 
   it('re-measures the chat-page edge on pointerdown when the cache went stale', () => {
